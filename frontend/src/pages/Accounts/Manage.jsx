@@ -51,7 +51,7 @@ export default function ManageAccount() {
         <div className="content-card">
           <h3 className="card-title" style={{ color: '#d93025' }}>Close Account</h3>
           <p className="helper-text" style={{ marginBottom: '16px' }}>
-            Account balance must be SGD 0.00 to proceed. Requires fresh TOTP verification.
+            Account balance must be SGD 0.00 to proceed. Requires TOTP verification.
           </p>
           <form onSubmit={handleCloseAccount} className="form-grid">
             <div className="field">
