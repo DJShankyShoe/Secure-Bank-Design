@@ -35,7 +35,7 @@ export default function AdminPanel() {
           <div className="hero-actions" style={{ marginTop: '24px' }}>
             {/* Mocking a suspend action button for testing */}
             <button className="secondary-button" onClick={() => handleSuspend('user_123')} style={{ borderColor: '#d93025', color: '#d93025' }}>
-              Suspend Flagged User (Test)
+              Suspend Flagged User
             </button>
           </div>
         </div>

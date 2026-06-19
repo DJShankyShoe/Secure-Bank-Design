@@ -18,7 +18,7 @@ export default function Register() {
       return;
     }
 
-    // TODO (Backend - Galvin / Shaqeel): 
+    // TODO
     // 1. Hook this up to the Flask /register route.
     // 2. Enforce password complexity (>= 12 chars, mixed case, digit, symbol) SERVER-SIDE.
     // 3. Hash password with Argon2id before storing.

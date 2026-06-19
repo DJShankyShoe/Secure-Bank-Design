@@ -7,7 +7,7 @@ export default function ManageAccount() {
 
   const handleUpdateEmail = async (e) => {
     e.preventDefault();
-    // TODO (Backend - Chun Yuan): 
+    // TODO 
     // 1. Validate email format (RFC 5322) server-side (SR-06).
     // 2. Send time-limited verification link (30 mins) to the new email.
     // 3. Do NOT change email until link is clicked.
@@ -17,7 +17,7 @@ export default function ManageAccount() {
 
   const handleCloseAccount = async (e) => {
     e.preventDefault();
-    // TODO (Backend - Jing Kai): 
+    // TODO
     // 1. Verify account balance == 0.
     // 2. Verify the fresh TOTP code provided (SR-11).
     // 3. Mark account as closed and log to audit_events (SR-14).
@@ -35,7 +35,6 @@ export default function ManageAccount() {
       </div>
 
       <div className="dual-grid">
-        {/* FR-04: Update Email */}
         <div className="content-card">
           <h3 className="card-title">Update Email Address</h3>
           <form onSubmit={handleUpdateEmail} className="form-grid">
@@ -49,7 +48,6 @@ export default function ManageAccount() {
           </form>
         </div>
 
-        {/* FR-05: Close Account */}
         <div className="content-card">
           <h3 className="card-title" style={{ color: '#d93025' }}>Close Account</h3>
           <p className="helper-text" style={{ marginBottom: '16px' }}>

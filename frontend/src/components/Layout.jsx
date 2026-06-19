@@ -2,11 +2,11 @@ import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
 const navItems = [
-  { id: "dashboard", label: "Dashboard", badge: "4", path: "/dashboard" },
-  { id: "accounts", label: "Accounts", badge: "2", path: "/accounts" },
+  { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
+  { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
-  { id: "bills", label: "Bill Payment", badge: "3", path: "/bills" },
-  { id: "admin", label: "Admin View", badge: "", path: "/admin" },
+  { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
+  { id: "admin", label: "Admin View", badge: "ADMIN ONLY", path: "/admin" },
 ];
 
 export default function Layout({ onLogout }) {

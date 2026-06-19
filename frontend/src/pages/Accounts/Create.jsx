@@ -8,7 +8,7 @@ export default function CreateAccount() {
   const handleCreate = async (e) => {
     e.preventDefault();
 
-    // TODO (Backend - Kai Yuan): 
+    // TODO
     // 1. Post to Flask route (e.g., /api/accounts/create).
     // 2. Generate a unique 10-digit account number server-side.
     // 3. Set initial balance to 0.

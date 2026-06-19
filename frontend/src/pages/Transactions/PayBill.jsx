@@ -10,7 +10,7 @@ export default function PayBill() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO (Backend - Team):
+    // TODO
     // 1. Enforce Idempotency-Key header on this POST request (SR-08).
     // 2. Verify sufficient balance server-side before execution.
     // 3. Ensure biller exists in the application.billers allowlist table.
