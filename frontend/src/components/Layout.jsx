@@ -4,8 +4,10 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
+  { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
+  { id: "settings", label: "Security Settings", badge: "TBD", path: "/settings" },
   { id: "admin", label: "Admin View", badge: "ADMIN ONLY", path: "/admin" },
 ];
 
