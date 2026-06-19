@@ -4,9 +4,9 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "4", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "2", path: "/accounts" },
-  { id: "transfer", label: "Transfers", badge: "PIN", path: "/transfer" },
+  { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "3", path: "/bills" },
-  { id: "admin", label: "Admin View", badge: "RBAC", path: "/admin" },
+  { id: "admin", label: "Admin View", badge: "", path: "/admin" },
 ];
 
 export default function Layout({ onLogout }) {
@@ -24,11 +24,6 @@ export default function Layout({ onLogout }) {
           </div>
         </div>
         <div className="topbar-actions">
-          <div className="status-pill">
-            <span className="status-dot"></span>
-            Protected session active
-          </div>
-          <span className="topbar-note">MFA verified</span>
           <button className="ghost-button" onClick={onLogout}>Log out</button>
         </div>
       </header>
