@@ -1,13 +1,9 @@
-import { defineConfig } from "vite";
-import { resolve } from "node:path";
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  build: {
-    rollupOptions: {
-      input: {
-        index: resolve(__dirname, "index.html"),
-        login: resolve(__dirname, "login.html"),
-      },
-    },
+  plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom'],
   },
-});
+})
