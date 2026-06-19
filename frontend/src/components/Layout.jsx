@@ -24,6 +24,7 @@ export default function Layout({ onLogout }) {
           </div>
         </div>
         <div className="topbar-actions">
+          <p> Session expires in 11:42 </p>
           <button className="ghost-button" onClick={onLogout}>Log out</button>
         </div>
       </header>
@@ -33,10 +34,10 @@ export default function Layout({ onLogout }) {
           <div className="profile-card">
             <div className="avatar">BJ</div>
             <strong>Bobby Jones</strong>
-            <p>Retail customer · Session expires in 11:42</p>
+            <p>Retail Customer</p>
           </div>
           <div className="nav-group">
-            <div className="nav-label">Workspace</div>
+            <div className="nav-label"></div>
             {navItems.map((item) => (
               <button
                 key={item.id}

@@ -17,7 +17,8 @@ export default function Dashboard() {
           <h1>Your accounts, payments, and transfers in one place.</h1>
           <div className="hero-actions">
             <button className="primary-button" onClick={() => navigate('/transfer')}>Make a transfer</button>
-            <button className="secondary-button" onClick={() => navigate('/settings')}>Security settings</button>
+            <button className="primary-button" onClick={() => navigate('/bills')}>Pay bills</button>
+            <button className="secondary-button" onClick={() => navigate('/settings')}>Security settings (TBD)</button>
           </div>
         </div>
       </section>
