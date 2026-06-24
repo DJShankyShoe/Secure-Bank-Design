@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-sast-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Non-secret CI values (the AES key is a throwaway test key, not production).
+      FLASK_SECRET_KEY: ci-only-secret-key
+      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
+      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
+      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
+      SMTP_HOST: localhost
+      SMTP_PORT: "587"
+      SMTP_FROM: no-reply@securebank.example
+      TOTP_ISSUER: SecureBank
+      # FORCE_HTTPS defaults to "true" in the test conftest so the HSTS/redirect
+      # and Secure-cookie tests run as intended.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (flake8, PEP 8 — NFR-05)
+        run: flake8 app
+
+      - name: SAST (Bandit — no high/medium, §14.7)
+        run: bandit -r app -ll
+
+      - name: Apply schema, roles and grants (sql/)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
+          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
+          done
+          psql -h localhost -U postgres -d securebank_ci -c \
+            "ALTER ROLE app_user PASSWORD 'app_pw'; \
+             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
+             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
+
+      - name: Tests (pytest)
+        run: pytest -q
+
+  dependency-check:
+    # OWASP Dependency-Check on the pinned requirements (SR-07).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: SecureBank-Backend
+          path: backend
+          format: HTML
+          # Fail the build on a CVSS >= 7 (high) finding.
+          args: >-
+            --failOnCVSS 7
+            --enableExperimental
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: ${{ github.workspace }}/reports

@@ -1,0 +1,29 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+
+# Local working docs / drafts — not part of the codebase
+CLAUDE.md
+PROGRESS.md
+SSD.sql
+
+# Distribution bundles (local only)
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Tooling
+backend/.venv/
+dependency-check-report/
+reports/
+*.log
+
+# Windows / WSL metadata
+*:Zone.Identifier
