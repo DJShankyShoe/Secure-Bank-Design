@@ -9,6 +9,8 @@ on:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: frontend
@@ -31,3 +33,10 @@ jobs:
 
       - name: Security audit (npm)
         run: npm audit --audit-level=high
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4  # TODO: pin to SHA before going live
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
