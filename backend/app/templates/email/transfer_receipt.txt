@@ -1,0 +1,1 @@
+Your transfer of {{ amount_cents }} cents (ref {{ reference_number }}) is complete.
