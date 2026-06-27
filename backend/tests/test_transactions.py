@@ -1,0 +1,207 @@
+"""FR-06 transfer tests: atomicity, PIN step-up, idempotency, IDOR, audit."""
+
+from __future__ import annotations
+
+import uuid
+from urllib.parse import parse_qs, urlparse
+
+import pyotp
+import pytest
+
+from app.blueprints.auth.login_service import login_password
+from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+
+_HTTPS = "https://localhost"
+_IP = "203.0.113.6"
+_PW = "Str0ng!Passw0rd"
+_PIN = "135790"
+
+
+@pytest.fixture(scope="module")
+def txn_app():
+    from app import create_app
+
+    a = create_app()
+    a.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    return a
+
+
+def _email() -> str:
+    return f"txn-{uuid.uuid4().hex[:12]}@example.com"
+
+
+def _setup_user(app):
+    email = _email()
+    with app.app_context():
+        res = register_customer(full_name="Txn User", nric="S1234567D", email=email,
+                                password=_PW, source_ip=_IP)
+        secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
+        confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        token = login_password(email=email, password=_PW, source_ip=_IP)
+    client = app.test_client()
+    client.post("/auth/login/mfa", json={"mfa_token": token, "code": pyotp.TOTP(secret).now()},
+                base_url=_HTTPS)
+    return client, {"email": email, "secret": secret}
+
+
+def _create_account(client, account_type="savings") -> dict:
+    return client.post("/accounts", json={"account_type": account_type},
+                       base_url=_HTTPS).get_json()
+
+
+def _fund(app, account_id: str, cents: int) -> None:
+    from app.extensions import db
+    from app.models import Account
+
+    s = db.app_session()
+    try:
+        acct = s.get(Account, uuid.UUID(account_id))
+        acct.balance_cents = cents
+        s.commit()
+    finally:
+        s.close()
+
+
+def _balance(client, account_id: str) -> int:
+    return client.get(f"/accounts/{account_id}", base_url=_HTTPS).get_json()["balance_cents"]
+
+
+def _set_pin(client, pin=_PIN, password=_PW):
+    return client.post("/transactions/pin", json={"password": password, "pin": pin}, base_url=_HTTPS)
+
+
+def _transfer(client, src, dst, amount, *, key=None, pin=None, dst_external=None):
+    body = {"source_account_number": src, "amount_cents": amount}
+    if dst is not None:
+        body["destination_account_number"] = dst
+    if dst_external is not None:
+        body["destination_external_ref"] = dst_external
+    if pin is not None:
+        body["pin"] = pin
+    headers = {"Idempotency-Key": key or str(uuid.uuid4())}
+    return client.post("/transactions/transfer", json=body, headers=headers, base_url=_HTTPS)
+
+
+# --------------------------------------------------------------------------- #
+
+def test_set_pin_success_and_wrong_password(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    assert _set_pin(c).status_code == 200
+    r = c.post("/transactions/pin", json={"password": "nope", "pin": _PIN}, base_url=_HTTPS)
+    assert r.status_code == 401
+
+
+def test_transfer_below_threshold_moves_money(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 200_000)
+    r = _transfer(c, src["account_number"], dst["account_number"], 50_000)
+    assert r.status_code == 201
+    body = r.get_json()
+    assert body["status"] == "complete" and body["pin_verified"] is False
+    assert _balance(c, src["account_id"]) == 150_000
+    assert _balance(c, dst["account_id"]) == 50_000
+
+
+def test_high_value_requires_pin(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 2_000_000)
+    r = _transfer(c, src["account_number"], dst["account_number"], 100_000)  # SGD 1,000
+    assert r.status_code == 403
+    assert _balance(c, src["account_id"]) == 2_000_000  # unchanged
+
+
+def test_high_value_with_pin_succeeds(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    _set_pin(c)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 2_000_000)
+    r = _transfer(c, src["account_number"], dst["account_number"], 100_000, pin=_PIN)
+    assert r.status_code == 201
+    assert r.get_json()["pin_verified"] is True
+    assert _balance(c, src["account_id"]) == 1_900_000
+
+
+def test_high_value_wrong_pin_401(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    _set_pin(c)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 2_000_000)
+    r = _transfer(c, src["account_number"], dst["account_number"], 100_000, pin="000000")
+    assert r.status_code == 401
+    assert _balance(c, src["account_id"]) == 2_000_000  # no money moved
+
+
+def test_insufficient_funds_400_no_change(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 1_000)
+    r = _transfer(c, src["account_number"], dst["account_number"], 50_000)
+    assert r.status_code == 400
+    assert _balance(c, src["account_id"]) == 1_000
+    assert _balance(c, dst["account_id"]) == 0
+
+
+def test_idempotent_replay_executes_once(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 200_000)
+    key = str(uuid.uuid4())
+    r1 = _transfer(c, src["account_number"], dst["account_number"], 50_000, key=key)
+    r2 = _transfer(c, src["account_number"], dst["account_number"], 50_000, key=key)
+    assert r1.status_code == 201 and r2.status_code == 201
+    assert r1.get_json()["reference_number"] == r2.get_json()["reference_number"]
+    assert _balance(c, src["account_id"]) == 150_000  # moved exactly once
+
+
+def test_idempotency_conflict_409(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 200_000)
+    key = str(uuid.uuid4())
+    assert _transfer(c, src["account_number"], dst["account_number"], 50_000, key=key).status_code == 201
+    r = _transfer(c, src["account_number"], dst["account_number"], 60_000, key=key)  # different body
+    assert r.status_code == 409
+
+
+def test_transfer_source_not_owned_404(require_db, txn_app):
+    owner, _ = _setup_user(txn_app)
+    src = _create_account(owner)
+    _fund(txn_app, src["account_id"], 200_000)
+    attacker, _ = _setup_user(txn_app)
+    a_dst = _create_account(attacker)
+    r = _transfer(attacker, src["account_number"], a_dst["account_number"], 10_000)
+    assert r.status_code == 404
+
+
+def test_transfer_requires_auth_401(require_db, txn_app):
+    c = txn_app.test_client()
+    r = _transfer(c, "0123456789", "9876543210", 1000)
+    assert r.status_code == 401
+
+
+def test_transfer_emits_audit(require_db, txn_app):
+    from sqlalchemy import text
+
+    from app.extensions import db
+
+    c, _ = _setup_user(txn_app)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 200_000)
+    ref = _transfer(c, src["account_number"], dst["account_number"], 50_000).get_json()["reference_number"]
+    with db.admin_reader_engine.connect() as conn:
+        n = conn.execute(
+            text("SELECT count(*) FROM audit.audit_events WHERE event_type='TRANSFER' "
+                 "AND outcome='success' AND action_detail->>'reference_number' = :r"),
+            {"r": ref},
+        ).scalar_one()
+    assert n == 1
