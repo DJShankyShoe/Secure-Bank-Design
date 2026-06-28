@@ -82,6 +82,18 @@ def is_pin_rate_limited(
     return _count_attempts(session, user_id, "pin", since=hour) >= Config.PIN_ATTEMPTS_PER_HOUR
 
 
+def is_email_action_rate_limited(session: Session, user_id: uuid.UUID) -> bool:
+    """True if email-send actions (email-change / unlock) breach the hourly limit.
+
+    Throttles per-account abuse of endpoints that send mail (anti-spam / SMTP
+    quota / sender-reputation protection). Caller records the attempt via
+    ``record_auth_attempt(..., "email")``.
+    """
+    hour = _now() - timedelta(hours=1)
+    count = _count_attempts(session, user_id, "email", since=hour)
+    return count >= Config.EMAIL_ACTION_LIMIT_PER_HOUR
+
+
 # --------------------------------------------------------------------------- #
 # Account lockout (SR-09)
 # --------------------------------------------------------------------------- #
