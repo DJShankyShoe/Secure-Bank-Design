@@ -32,7 +32,7 @@ CREATE INDEX idx_idempotency_expires ON session.idempotency_records (expires_at)
 CREATE TABLE session.auth_attempts (
   attempt_id       uuid PRIMARY KEY,
   user_id          uuid NOT NULL REFERENCES application.users (user_id),
-  attempt_type     varchar(16) NOT NULL CHECK (attempt_type IN ('totp','pin')),
+  attempt_type     varchar(16) NOT NULL CHECK (attempt_type IN ('totp','pin','email')),
   occurred_at      timestamptz NOT NULL DEFAULT NOW(),
   transaction_ref  varchar(32)                                          -- set for PIN (per-transaction 3/txn limit)
 );

@@ -124,6 +124,7 @@ class Config:
     TOTP_RATE_LIMIT_PER_MIN: ClassVar[int] = 5    # TOTP attempts/min/account (SR-11)
     PIN_ATTEMPTS_PER_TXN: ClassVar[int] = 3       # PIN tries per transaction (SR-12)
     PIN_ATTEMPTS_PER_HOUR: ClassVar[int] = 5      # PIN tries/hour/account (SR-12)
+    EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 3  # email-change/unlock req/hr/account
 
     # Argon2id parameters — password and PIN MUST differ (SR-01/SR-12).
     ARGON2_PASSWORD_TIME_COST: ClassVar[int] = 3
@@ -145,6 +146,7 @@ class Config:
     TRANSACTION_HISTORY_PAGE_SIZE: ClassVar[int] = 25  # FR-03
     PASSWORD_MIN_LENGTH: ClassVar[int] = 12            # FR-01
     TRANSACTION_PIN_LENGTH: ClassVar[int] = 6          # SR-12
+    MAX_CONTENT_BYTES: ClassVar[int] = 1_048_576       # 1 MB request-body cap (defence-in-depth)
 
     # Session cookie flags (SR-13). The cookie only carries the opaque session id;
     # the session itself lives server-side.
@@ -226,4 +228,5 @@ class Config:
             "SESSION_COOKIE_SECURE": self.force_https,
             "SESSION_COOKIE_SAMESITE": self.SESSION_COOKIE_SAMESITE,
             "PERMANENT_SESSION_LIFETIME": self.SESSION_ABSOLUTE_LIFETIME,
+            "MAX_CONTENT_LENGTH": self.MAX_CONTENT_BYTES,  # reject oversized bodies → 413
         }

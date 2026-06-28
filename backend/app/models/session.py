@@ -87,7 +87,7 @@ class AuthAttempt(Base):
     __tablename__ = "auth_attempts"
     __table_args__ = (
         CheckConstraint(
-            "attempt_type IN ('totp','pin')", name="auth_attempts_type_check"
+            "attempt_type IN ('totp','pin','email')", name="auth_attempts_type_check"
         ),
         {"schema": "session"},
     )

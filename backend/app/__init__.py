@@ -76,6 +76,17 @@ def create_app(config: Optional[Config] = None) -> Flask:
     _register_error_handlers(app)
     _register_cli(app)
 
+    @app.after_request
+    def _no_store(response):  # noqa: ANN001,ANN202
+        """Stop caches/CDNs/proxies from storing API responses (SR-03/SR-04).
+
+        Responses can carry personalised data (balances, NRIC); this prevents a
+        shared cache from serving one user's data to another.
+        """
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+        return response
+
     @app.get("/healthz")
     def healthz():  # noqa: ANN202 - tiny infra probe
         """Unauthenticated liveness probe for the reverse proxy/orchestrator."""

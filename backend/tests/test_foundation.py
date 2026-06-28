@@ -231,3 +231,18 @@ def test_admin_reader_can_select_not_write(require_db):
                     "VALUES (gen_random_uuid(),'X','127.0.0.1','success')"
                 )
             )
+
+
+# --------------------------------------------------------------------------- #
+# Hardening: cache-control + body-size cap
+# --------------------------------------------------------------------------- #
+
+def test_responses_are_no_store(client):
+    r = client.get("/healthz", headers={"X-Forwarded-Proto": "https"})
+    assert r.headers.get("Cache-Control") == "no-store"
+    assert r.headers.get("Pragma") == "no-cache"
+
+
+def test_max_content_length_configured(app):
+    # 1 MB request-body cap (defence-in-depth; oversized bodies -> 413).
+    assert app.config.get("MAX_CONTENT_LENGTH") == 1_048_576
