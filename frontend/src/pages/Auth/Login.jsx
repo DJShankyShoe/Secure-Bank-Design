@@ -1,22 +1,45 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
   const [showMfa, setShowMfa] = useState(false);
-  const [credentials, setCredentials] = useState({ userId: '', password: '' });
-  const [totp, setTotp] = useState('');
+  const [credentials, setCredentials] = useState({
+    email: '',
+    password: ''
+  });
 
-  const handlePrimaryAction = (e) => {
-    e.preventDefault();
-    if (showMfa) {
-      console.log("Verifying TOTP:", totp);
-      onLoginSuccess(); 
+  const [totp, setTotp] = useState('');
+  const [mfaToken, setMfaToken] = useState('');
+
+  const handlePrimaryAction = async (e) => {
+  e.preventDefault();
+
+  try {
+    if (!showMfa) {
+      const response = await api.login(
+        credentials.email,
+        credentials.password
+      );
+
+      setMfaToken(response.mfa_token);
+      setShowMfa(true);
+
     } else {
-      console.log("Verifying credentials for:", credentials.userId);
-      setShowMfa(true); 
+
+      await api.verifyMfa(
+        mfaToken,
+        totp
+      );
+
+      onLoginSuccess();
     }
-  };
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -84,13 +107,18 @@ export default function Login({ onLoginSuccess }) {
             {!showMfa ? (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>User ID</label>
+                  <label htmlFor="email" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Email Address</label>
                   <input 
-                    id="userId"
+                    id="email"
                     type="text" 
                     required
-                    value={credentials.userId}
-                    onChange={(e) => setCredentials({...credentials, userId: e.target.value})}
+                    value={credentials.email}
+                    onChange={(e) =>
+                      setCredentials({
+                        ...credentials,
+                        email: e.target.value
+                      })
+                    }
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
                     onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}

@@ -1,12 +1,55 @@
-import React, { useState } from 'react';
+// PayBill.jsx
+import React, { useEffect, useState } from 'react';
+import { api } from '../../api/api';
 
 export default function PayBill() {
+  const [accounts, setAccounts] = useState([]);
+  const [billers, setBillers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
   const [paymentData, setPaymentData] = useState({
-    billerId: 'SP Utilities',
-    sourceAccount: 'Savings Account • ****4831',
+    billerId: '',
+    sourceAccount: '',
     amount: '',
     date: ''
   });
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [accountsRes, billersRes] = await Promise.all([
+          api.getAccounts(),
+          api.getBillers(),
+        ]);
+
+        const loadedAccounts = accountsRes.accounts || [];
+        const loadedBillers = billersRes.billers || [];
+
+        setAccounts(loadedAccounts);
+        setBillers(loadedBillers);
+
+        setPaymentData((prev) => ({
+          ...prev,
+          billerId: loadedBillers[0]?.biller_id || '',
+          sourceAccount: loadedAccounts[0]?.account_number || '',
+        }));
+
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  const formatAccountLabel = (account) =>
+    `${account.account_type} • ****${account.account_number.slice(-4)}`;
+
+  const selectedBiller = billers.find((b) => b.biller_id === paymentData.billerId);
+  const selectedAccount = accounts.find((a) => a.account_number === paymentData.sourceAccount);
 
   // Strict Currency Validator
   const handleAmountChange = (e) => {
@@ -18,12 +61,23 @@ export default function PayBill() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO (Backend):
-    // 1. Enforce Idempotency-Key header on this POST request.
-    // 2. Verify sufficient balance server-side before execution.
-    // 3. Ensure biller exists in the application.billers allowlist table.
-    console.log("Mock Pay Bill Payload:", paymentData);
-    alert("Bill payment initiated successfully.");
+
+    const amount_cents = Math.round(parseFloat(paymentData.amount) * 100);
+
+    setSubmitting(true);
+    try {
+      await api.billPayment(
+        paymentData.sourceAccount,
+        paymentData.billerId,
+        amount_cents
+      );
+      alert("Bill payment initiated successfully.");
+      setPaymentData({ ...paymentData, amount: '', date: '' });
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -46,10 +100,13 @@ export default function PayBill() {
               <select 
                 value={paymentData.billerId} 
                 onChange={(e) => setPaymentData({...paymentData, billerId: e.target.value})}
+                disabled={loading}
               >
-                <option value="SP Utilities">SP Utilities</option>
-                <option value="StarHub Broadband">StarHub Broadband</option>
-                <option value="SecureCard Platinum">SecureCard Platinum</option>
+                {billers.map((biller) => (
+                  <option key={biller.biller_id} value={biller.biller_id}>
+                    {biller.biller_name}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="field">
@@ -57,9 +114,13 @@ export default function PayBill() {
               <select 
                 value={paymentData.sourceAccount} 
                 onChange={(e) => setPaymentData({...paymentData, sourceAccount: e.target.value})}
+                disabled={loading}
               >
-                <option>Savings Account • ****4831</option>
-                <option>Current Account • ****9264</option>
+                {accounts.map((account) => (
+                  <option key={account.account_id} value={account.account_number}>
+                    {formatAccountLabel(account)}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="field">
@@ -90,7 +151,9 @@ export default function PayBill() {
             </div>
 
             <div className="hero-actions" style={{ marginTop: '16px' }}>
-              <button type="submit" className="primary-button">Confirm Payment</button>
+              <button type="submit" className="primary-button" disabled={submitting || loading}>
+                {submitting ? "Processing..." : "Confirm Payment"}
+              </button>
               <button type="button" className="secondary-button">Payment history</button>
             </div>
           </form>
@@ -102,11 +165,13 @@ export default function PayBill() {
           <ul className="stack-list">
             <li className="row-between">
               <span className="table-muted">Biller</span>
-              <strong>{paymentData.billerId}</strong>
+              <strong>{selectedBiller?.biller_name || '—'}</strong>
             </li>
             <li className="row-between">
               <span className="table-muted">Account</span>
-              <strong style={{ fontSize: '0.9rem' }}>{paymentData.sourceAccount}</strong>
+              <strong style={{ fontSize: '0.9rem' }}>
+                {selectedAccount ? formatAccountLabel(selectedAccount) : '—'}
+              </strong>
             </li>
             <li className="row-between">
               <span className="table-muted">Payment Amount</span>

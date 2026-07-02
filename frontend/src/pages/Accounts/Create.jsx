@@ -1,22 +1,28 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function CreateAccount() {
   const navigate = useNavigate();
   const [accountType, setAccountType] = useState('savings');
 
   const handleCreate = async (e) => {
-    e.preventDefault();
+  e.preventDefault();
 
-    // TODO
-    // 1. Post to Flask route (e.g., /api/accounts/create).
-    // 2. Generate a unique 10-digit account number server-side.
-    // 3. Set initial balance to 0.
-    // 4. Ensure X-CSRFToken is validated.
-    console.log(`Mock Create Account: ${accountType}`);
+    try {
+      const response = await api.createAccount(accountType);
 
-    // Redirect to dashboard on success
-    navigate('/dashboard');
+      console.log(response);
+
+      alert(
+        `Account created successfully!\nAccount Number: ${response.account_number}`
+      );
+
+      navigate("/dashboard");
+
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (

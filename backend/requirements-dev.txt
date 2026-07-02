@@ -1,0 +1,10 @@
+# SecureBank backend — dev/test/SAST tooling.
+# Kept separate from runtime requirements.txt so OWASP Dependency-Check scans the
+# real runtime surface and these tools don't ship to production. Install with:
+#   pip install -r requirements-dev.txt
+-r requirements.txt
+
+pytest==8.3.4            # test suite
+bandit==1.8.0            # SAST — must be clean, no high/medium
+flake8==7.1.1            # PEP 8 lint (NFR-05)
+# OWASP Dependency-Check & OWASP ZAP are run as external tools in CI, not pip deps.

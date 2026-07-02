@@ -1,30 +1,54 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from "react";
+import { api } from "../../api/api";
 
 export default function ManageAccount() {
   const [newEmail, setNewEmail] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [accountToClose, setAccountToClose] = useState('');
+  const [accounts, setAccounts] = useState([]);
+
+  //remove hardcoded acc list.
+  useEffect(() => {
+  const loadAccounts = async () => {
+    try {
+      const response = await api.getAccounts();
+      setAccounts(response.accounts);
+    } catch (err) {
+      alert(err.message);
+    }
+    };
+
+    loadAccounts();
+  }, []);
 
   const handleUpdateEmail = async (e) => {
-    e.preventDefault();
-    // TODO 
-    // 1. Validate email format (RFC 5322) server-side (SR-06).
-    // 2. Send time-limited verification link (30 mins) to the new email.
-    // 3. Do NOT change email until link is clicked.
-    console.log("Mock Email Update request for:", newEmail);
-    alert("Verification link sent to your new email.");
+  e.preventDefault();
+
+    try {
+      const response = await api.requestEmailChange(newEmail);
+
+      alert(response.status);
+
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleCloseAccount = async (e) => {
-    e.preventDefault();
-    // TODO
-    // 1. Verify account balance == 0.
-    // 2. Verify the fresh TOTP code provided (SR-11).
-    // 3. Mark account as closed and log to audit_events (SR-14).
-    console.log(`Mock Close Account: ${accountToClose} with TOTP: ${totpCode}`);
-    alert("Account closure request submitted.");
-  };
+  e.preventDefault();
 
+    try {
+      await api.closeAccount(
+        accountToClose,
+        totpCode
+      );
+
+      alert("Account closed.");
+
+    } catch (err) {
+      alert(err.message);
+    }
+  }
   return (
     <section className="section">
       <div className="section-header">
@@ -58,7 +82,14 @@ export default function ManageAccount() {
               <label>Select Account to Close</label>
               <select required value={accountToClose} onChange={(e) => setAccountToClose(e.target.value)}>
                 <option value="">-- Select Account --</option>
-                <option value="acc_1">Savings (****4831)</option>
+                {accounts.map((account) => (
+                  <option
+                    key={account.account_id}
+                    value={account.account_id}
+                  >
+                    {account.account_type} ({account.account_number})
+                  </option>
+                ))}
               </select>
             </div>
             <div className="field">

@@ -1,19 +1,49 @@
-import React, { useMemo, useState } from 'react';
+// Transfer.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { api } from '../../api/api';
 
 export default function Transfer() {
   const projectedFee = useMemo(() => "SGD 0.00", []);
-  
-  // Consolidate all form fields into one state object
+
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
   const [formData, setFormData] = useState({
-    sourceAccount: 'Savings Account • ****4831',
+    sourceAccount: '',
     destinationType: 'Third-party',
     beneficiaryName: '',
     destinationAccount: '',
     amount: '',
     reference: ''
   });
-  
+
   const [transactionPin, setTransactionPin] = useState('');
+
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const response = await api.getAccounts();
+        const loadedAccounts = response.accounts || [];
+        setAccounts(loadedAccounts);
+
+        setFormData((prev) => ({
+          ...prev,
+          sourceAccount: loadedAccounts[0]?.account_number || '',
+        }));
+
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAccounts();
+  }, []);
+
+  const formatAccountLabel = (account) =>
+    `${account.account_type} • ****${account.account_number.slice(-4)}`;
 
   // Strict Currency Validator
   const handleAmountChange = (e) => {
@@ -23,18 +53,31 @@ export default function Transfer() {
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    // TODO (Backend):
-    // 1. Enforce Idempotency-Key header on this POST request.
-    // 2. Verify sufficient balance server-side before execution.
-    // 3. Ensure transfer PIN logic applies if >= 1000.
-    console.log("Mock Transfer Payload:", formData, "PIN:", transactionPin);
-    alert("Transfer initiated successfully.");
-  };
-
   // Determine if PIN is required dynamically (>= 1000 SGD)
   const requiresPin = parseFloat(formData.amount || 0) >= 1000;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const amount_cents = Math.round(parseFloat(formData.amount) * 100);
+
+    setSubmitting(true);
+    try {
+      await api.transfer(
+        formData.sourceAccount,
+        formData.destinationAccount,
+        amount_cents,
+        requiresPin ? transactionPin : null
+      );
+      alert("Transfer initiated successfully.");
+      setFormData({ ...formData, amount: '', reference: '', beneficiaryName: '', destinationAccount: '' });
+      setTransactionPin('');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <section className="section">
@@ -57,9 +100,13 @@ export default function Transfer() {
                 <select 
                   value={formData.sourceAccount}
                   onChange={(e) => setFormData({...formData, sourceAccount: e.target.value})}
+                  disabled={loading}
                 >
-                  <option>Savings Account • ****4831</option>
-                  <option>Current Account • ****9264</option>
+                  {accounts.map((account) => (
+                    <option key={account.account_id} value={account.account_number}>
+                      {formatAccountLabel(account)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="field">
@@ -120,7 +167,9 @@ export default function Transfer() {
             </div>
             
             <div className="hero-actions" style={{ marginTop: '20px' }}>
-              <button type="submit" className="primary-button">Continue</button>
+              <button type="submit" className="primary-button" disabled={submitting || loading}>
+                {submitting ? "Processing..." : "Continue"}
+              </button>
               <button type="button" className="secondary-button">Save beneficiary</button>
             </div>
           </div>
@@ -163,7 +212,7 @@ export default function Transfer() {
                     maxLength="6"
                     required={requiresPin}
                     value={transactionPin}
-                    onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))} // Restrict to numbers
+                    onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))}
                   />
                 </div>
               </div>
