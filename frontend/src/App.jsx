@@ -15,7 +15,7 @@ import CreateAccount from './pages/Accounts/Create';
 import ManageAccount from './pages/Accounts/Manage';
 import AdminPanel from './pages/Admin/Panel';
 import ForgotPassword from './pages/Auth/ForgotPassword.jsx';
-
+import ResetPassword from './pages/Auth/ResetPassword.jsx';
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
@@ -29,6 +29,7 @@ export default function App() {
         />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         
         {/* Protected Routes wrapped in the Layout component */}
         <Route element={<Layout onLogout={() => setIsAuthenticated(false)} />}>
