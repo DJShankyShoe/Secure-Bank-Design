@@ -20,7 +20,9 @@ from .login_service import (
     login_password,
     logout,
     request_account_unlock,
+    request_password_reset,
     verify_account_unlock,
+    verify_password_reset,
 )
 from .service import (
     AuthServiceError,
@@ -210,3 +212,39 @@ def unlock_verify():
     except UnlockLinkInvalid as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(status="unlocked"), 200
+
+
+@bp.post("/password/reset/request")
+def password_reset_request():
+    """Request a 30-min single-use password-reset link (FR-09).
+
+    Body: ``email``. Unauthenticated. Always returns a generic 200 whether or not
+    the address is registered (anti-enumeration, SR-09).
+    """
+    request_password_reset(email=_json().get("email", ""), source_ip=client_ip())
+    return jsonify(status="reset_requested"), 200
+
+
+@bp.post("/password/reset/verify")
+def password_reset_verify():
+    """Consume a reset token, verify a second factor, and set a new password
+    (FR-09, SR-01/11/13).
+
+    Body: ``token`` (from the emailed link), ``new_password``, and ``totp_code``
+    (a TOTP code or a one-time backup code). Revokes all existing sessions on
+    success. Generic errors only (400 bad token / weak password, 401 bad code,
+    429 too many code attempts).
+    """
+    body = _json()
+    try:
+        verify_password_reset(
+            token=body.get("token", ""),
+            new_password=body.get("new_password", ""),
+            totp_code=body.get("totp_code", ""),
+            source_ip=client_ip(),
+        )
+    except ValidationError as exc:
+        return jsonify(error=exc.message), 400
+    except AuthServiceError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(status="password_reset"), 200
