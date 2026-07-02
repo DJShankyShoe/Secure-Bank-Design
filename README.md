@@ -1,6 +1,6 @@
 # SecureBank - Frontend UI
 
-A premium, secure retail internet banking portal. This repository contains the frontend Single Page Application (SPA) built to interface with the SecureBank Flask backend. 
+A premium, secure retail internet banking portal. This repository contains the frontend built to interface with the SecureBank Flask backend. 
 
 The UI is designed with a focus on layered controls, high-contrast accessible design (WCAG 2.1 AA compliant), and a seamless customer experience.
 
