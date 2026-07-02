@@ -48,8 +48,6 @@ The codebase is modularized to strictly separate routing, layout, and domain-spe
 ```
 frontend/
 ├── src/
-│   ├── api/
-│   │   └── mockBackend.js      # Placeholder async functions (Swap with real API calls later)
 │   ├── components/
 │   │   └── Layout.jsx          # Shared TopBar and Sidebar wrapper for authenticated routes
 │   ├── pages/
