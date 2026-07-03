@@ -40,6 +40,67 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 
 ---
 
+## Endpoint index
+
+**Auth column:** `Public` = no session · `Auth` = logged-in session cookie · `Admin` = admin role ·
+`Token` = gated by an emailed one-time token (no session needed).
+
+| Method · Path | Auth | Purpose |
+|---|---|---|
+| `GET /healthz` | Public | Liveness probe |
+| `GET /auth/csrf` | Public | Get a CSRF token (call before any POST) |
+| `POST /auth/register` | Public | Create a customer (→ `pending`) |
+| `POST /auth/register/verify-totp` | Public | Confirm TOTP → activate account |
+| `POST /auth/login` | Public | Stage 1: password → `mfa_token` |
+| `POST /auth/login/mfa` | Public | Stage 2: TOTP/backup code → session cookie |
+| `POST /auth/logout` | Auth | Revoke the session |
+| `POST /auth/email` | Auth | Request an email change (link to new address) |
+| `POST /auth/email/verify` | Token | Confirm the new email |
+| `POST /auth/unlock/request` | Public | Email an unlock link (locked account) |
+| `POST /auth/unlock/verify` | Token | Consume an unlock link |
+| `POST /auth/password/reset/request` | Public | Email a reset link (needs email **+ NRIC**) |
+| `POST /auth/password/reset/verify` | Token | Set a new password (token + TOTP) |
+| `POST /accounts` | Auth | Open a savings/current account |
+| `GET /accounts` | Auth | List own accounts |
+| `GET /accounts/{id}` | Auth | View one account |
+| `GET /accounts/{id}/transactions` | Auth | Paginated, filterable history |
+| `POST /accounts/{id}/close` | Auth | Request closure (→ admin approval) |
+| `POST /transactions/pin` | Auth | Set/replace the transaction PIN |
+| `GET /transactions/pin` | Auth | Whether a PIN is set (`pin_set`) |
+| `GET /transactions/billers` | Auth | List allowlisted billers |
+| `POST /transactions/transfer` | Auth | Transfer funds (`Idempotency-Key`) |
+| `POST /transactions/bill-payment` | Auth | Pay a biller (`Idempotency-Key`) |
+| `GET /admin/users` | Admin | List/search users (`?q=`) |
+| `GET /admin/users/{id}/accounts` | Admin | One user's accounts (drill-down) |
+| `GET /admin/accounts` | Admin | List all accounts |
+| `GET /admin/audit` | Admin | Read audit log (`?type=`, `?user=`) |
+| `GET /admin/users/{id}/nric` | Admin | Reveal full NRIC (audited) |
+| `POST /admin/users/{id}/suspend` | Admin | Suspend a user |
+| `POST /admin/users/{id}/unlock` | Admin | Unlock/reactivate a user |
+| `POST /admin/accounts/{id}/close` | Admin | Direct-close an account |
+| `POST /admin/accounts/{id}/closure/approve` | Admin | Approve a customer close request |
+| `POST /admin/accounts/{id}/closure/reject` | Admin | Reject a close request |
+| `POST /admin/accounts/{id}/suspend` | Admin | Freeze one account |
+| `POST /admin/accounts/{id}/unsuspend` | Admin | Lift an account freeze |
+
+## Field validation (server-side allowlist — every field is checked before any logic)
+
+| Field | Rule |
+|---|---|
+| `email` | RFC 5322, ≤ 254 chars, lowercased on write |
+| `password` | 12–128 chars; must include upper + lower + digit + symbol |
+| `nric` | Singapore NRIC (e.g. `S1234567D`); stored **encrypted**, shown **masked** |
+| `full_name` | ≤ 120 chars |
+| `account_type` | `savings` \| `current` |
+| `amount_cents` | positive integer, ≤ 1 000 000 000 (SGD 10M); **≥ 100000 (SGD 1,000) needs the PIN** |
+| `pin` | exactly 6 digits |
+| `totp_code` / `code` | 6-digit TOTP (or a one-time backup code where noted) |
+| `account_number` | 10 digits |
+| `Idempotency-Key` header | UUIDv4 (transfer & bill-payment) |
+| any body | > 1 MB → `413` |
+
+---
+
 ## Auth — `/auth`
 
 ### `GET /auth/csrf`
@@ -102,23 +163,23 @@ token) so the real owner is notified if a hijacked session tries to change the e
 ```
 
 ### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
+Requires **both** email **and** NRIC — a link is sent only if they match an existing account.
 ```jsonc
-{ "email": "a@b.com" }                      // → 200 { "status": "reset_requested" }
+{ "email": "a@b.com", "nric": "S1234567D" }  // → 200 { "status": "reset_requested" }
 ```
-Always generic (never reveals whether the email exists). Rate-limited 10/hour per account.
+Always generic `200` (never reveals whether the email/NRIC matched). Rate-limited 10/hour per account.
 
 ### `POST /auth/password/reset/verify`  — set a new password from the emailed link
-Requires **two extra factors** on top of the link — the account's **NRIC** and a **TOTP code (or a
-one-time backup code)** — so inbox access alone can't reset the password.
+Identity (email + NRIC) was already proven at the **request** step, so here you supply the link's
+`token`, the new password, and a **TOTP code (or a one-time backup code)** as a second factor.
 ```jsonc
-{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "nric": "S1234567D", "totp_code": "123456" }
+{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "totp_code": "123456" }
 // → 200 { "status": "password_reset" }
 ```
 `new_password` must meet the FR-01 policy (≥12 chars, mixed case, digit, symbol) → else `400`;
-`400` on a bad/expired/already-used token or malformed NRIC; `401` if the NRIC or `totp_code` is
-wrong (same generic error for either); `429` on too many attempts. On success **all existing
-sessions are revoked** and any lockout is cleared. The link is single-use. (`totp_code` accepts a
-current TOTP or any unused backup code.)
+`400` on a bad/expired/already-used token; `401` if `totp_code` is wrong; `429` on too many attempts.
+On success **all existing sessions are revoked** and any lockout is cleared. The link is single-use.
+(`totp_code` accepts a current TOTP or any unused backup code.)
 
 > The reset email contains a **clickable link** (`<FRONTEND_BASE_URL>/reset-password?token=…`), not a
 > raw token; the SPA reads `token` from the query string. The verify/unlock emails work the same way.
