@@ -25,8 +25,6 @@ export default function SetupPin({ onSetupComplete }) {
     // 2. Mark the user's `requires_pin_setup` flag as false in the database.
     console.log("Mock PIN Setup Complete:", pinData.pin);
     
-    // --- THE FIX IS HERE ---
-    // Update the App.jsx state to fully authenticate the user
     if (onSetupComplete) {
       onSetupComplete('customer');
     } 
