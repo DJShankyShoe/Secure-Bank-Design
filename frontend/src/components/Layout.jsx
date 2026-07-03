@@ -4,6 +4,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
+  { id: "open-account", label: "Open Account", badge: "", path: "/accounts/create" },
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
@@ -14,6 +15,23 @@ const navItems = [
 export default function Layout({ onLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const storedUser = JSON.parse(sessionStorage.getItem("securebank_user") || "{}");
+
+  const displayName =
+    storedUser.full_name ||
+    storedUser.fullName ||
+    storedUser.name ||
+    storedUser.email ||
+    "Customer";
+
+  const initials = displayName
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const roleLabel = storedUser.role || "Retail Customer";
 
   return (
     <div className="app-shell">
@@ -34,9 +52,9 @@ export default function Layout({ onLogout }) {
       <div className="layout">
         <aside className="sidebar">
           <div className="profile-card">
-            <div className="avatar">BJ</div>
-            <strong>Bobby Jones</strong>
-            <p>Retail Customer</p>
+            <div className="avatar">{initials}</div>
+            <strong>{displayName}</strong>
+            <p>{roleLabel}</p>
           </div>
           <div className="nav-group">
             <div className="nav-label"></div>

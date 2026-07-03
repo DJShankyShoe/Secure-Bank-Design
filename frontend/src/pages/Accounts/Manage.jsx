@@ -43,12 +43,31 @@ export default function ManageAccount() {
         totpCode
       );
 
+      setAccounts((prevAccounts) =>
+        prevAccounts.filter((account) => account.account_id !== accountToClose)
+      );
+
+      setAccountToClose('');
+      setTotpCode('');
+
       alert("Account closed.");
 
     } catch (err) {
       alert(err.message);
     }
   }
+
+  const activeAccounts = accounts.filter((account) => {
+    const status = String(account.status || "").toLowerCase();
+
+    return (
+      status !== "closed" &&
+      status !== "inactive" &&
+      !account.closed_at &&
+      account.is_closed !== true
+    );
+  });
+
   return (
     <section className="section">
       <div className="section-header">
@@ -82,7 +101,7 @@ export default function ManageAccount() {
               <label>Select Account to Close</label>
               <select required value={accountToClose} onChange={(e) => setAccountToClose(e.target.value)}>
                 <option value="">-- Select Account --</option>
-                {accounts.map((account) => (
+                {activeAccounts.map((account) => (
                   <option
                     key={account.account_id}
                     value={account.account_id}

@@ -2,11 +2,15 @@ const BASE_URL = "";
 
 let csrfToken = null;
 
+export function resetCsrf() {
+  csrfToken = null;
+}
+
 /**
  * Get CSRF token
  */
-export async function initCsrf() {
-  if (csrfToken) return csrfToken;
+export async function initCsrf(force = false) {
+  if (csrfToken && !force) return csrfToken;
 
   const res = await fetch(`${BASE_URL}/auth/csrf`, {
     credentials: "include",
@@ -22,9 +26,11 @@ export async function initCsrf() {
   return csrfToken;
 }
 
-async function request(endpoint, options = {}) {
-  if (!csrfToken && options.method !== "GET") {
-    await initCsrf();
+async function request(endpoint, options = {}, retryOnCsrf = true) {
+  const method = options.method || "GET";
+
+  if (method !== "GET") {
+    await initCsrf(true);
   }
 
   const headers = {
@@ -35,8 +41,8 @@ async function request(endpoint, options = {}) {
 
   const response = await fetch(`${BASE_URL}${endpoint}`, {
     credentials: "include",
-    headers,
     ...options,
+    headers,
   });
 
   let data = {};
@@ -48,7 +54,22 @@ async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+    const errorMessage = data.error || data.message || "Request failed";
+
+    const isCsrfError =
+      response.status === 403 &&
+      errorMessage.toLowerCase().includes("csrf");
+
+    if (isCsrfError && retryOnCsrf) {
+      await initCsrf(true);
+      return request(endpoint, options, false);
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  if (data.csrf_token) {
+    csrfToken = data.csrf_token;
   }
 
   return data;
@@ -59,6 +80,23 @@ export const api = {
   // =========================
   // AUTH
   // =========================
+  requestPasswordReset: (email) =>
+    request("/auth/password/reset/request", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+      }),
+    }),
+
+  resetPassword: (token, new_password, totp_code) =>
+    request("/auth/password/reset/verify", {
+      method: "POST",
+      body: JSON.stringify({
+        token,
+        new_password,
+        totp_code,
+      }),
+    }),
 
   register: (full_name, nric, email, password) =>
     request("/auth/register", {
@@ -80,28 +118,40 @@ export const api = {
       }),
     }),
 
-  login: (email, password) =>
-    request("/auth/login", {
+  login: async (email, password) => {
+    csrfToken = null;
+
+    return request("/auth/login", {
       method: "POST",
       body: JSON.stringify({
         email,
         password,
       }),
-    }),
+    });
+  },
 
-  verifyMfa: (mfa_token, code) =>
-    request("/auth/login/mfa", {
+  verifyMfa: async (mfa_token, code) => {
+    const response = await request("/auth/login/mfa", {
       method: "POST",
       body: JSON.stringify({
         mfa_token,
         code,
       }),
-    }),
+    });
 
-  logout: () =>
-    request("/auth/logout", {
-      method: "POST",
-    }),
+    return response;
+  },
+
+  logout: async () => {
+    try {
+      return await request("/auth/logout", {
+        method: "POST",
+      });
+    } finally {
+      csrfToken = null;
+      sessionStorage.removeItem("securebank_user");
+    }
+  },
 
   requestEmailChange: (new_email) =>
     request("/auth/email", {

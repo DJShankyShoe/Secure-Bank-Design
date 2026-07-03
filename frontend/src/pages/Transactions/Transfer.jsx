@@ -79,6 +79,17 @@ export default function Transfer() {
     }
   };
 
+  const activeAccounts = accounts.filter((account) => {
+  const status = String(account.status || "").toLowerCase();
+
+    return (
+      status !== "closed" &&
+      status !== "inactive" &&
+      !account.closed_at &&
+      account.is_closed !== true
+    );
+  });
+
   return (
     <section className="section">
       <div className="section-header">
@@ -102,7 +113,7 @@ export default function Transfer() {
                   onChange={(e) => setFormData({...formData, sourceAccount: e.target.value})}
                   disabled={loading}
                 >
-                  {accounts.map((account) => (
+                  {activeAccounts.map((account) => (
                     <option key={account.account_id} value={account.account_number}>
                       {formatAccountLabel(account)}
                     </option>

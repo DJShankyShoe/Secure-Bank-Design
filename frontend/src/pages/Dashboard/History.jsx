@@ -61,6 +61,17 @@ export default function History() {
     console.log(filters);
   };
 
+  const activeAccounts = accounts.filter((account) => {
+  const status = String(account.status || "").toLowerCase();
+
+    return (
+      status !== "closed" &&
+      status !== "inactive" &&
+      !account.closed_at &&
+      account.is_closed !== true
+    );
+  });
+
 
   return (
     <section className="section">
@@ -82,7 +93,7 @@ export default function History() {
               value={selectedAccount}
               onChange={(e) => setSelectedAccount(e.target.value)}
             >
-              {accounts.map((account) => (
+              {activeAccounts.map((account) => (
                 <option
                   key={account.account_id}
                   value={account.account_id}

@@ -1,20 +1,21 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function ForgotPassword() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [recoveryData, setRecoveryData] = useState({ userId: '', email: '' });
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // TODO (Backend):
-    // 1. Verify if userId and email match a valid user in the DB.
-    // 2. Generate a secure, time-limited JWT reset token.
-    // 3. Send email via SMTPLib (from your Python stack).
-    // 4. Always return a generic success message to prevent user enumeration (SR-10).
-    console.log("Mock Recovery Request for:", recoveryData);
-    setStep(2); // Move to success confirmation step
+
+    try {
+      await api.requestPasswordReset(recoveryData.email);
+      setStep(2);
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (

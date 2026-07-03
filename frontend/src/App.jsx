@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { api } from "./api/api";
 
 // 1. Import the Shared Layout
 import Layout from './components/Layout';
@@ -19,6 +20,17 @@ import ResetPassword from './pages/Auth/ResetPassword.jsx';
 import RegisterTotpSetup from "./pages/Auth/RegisterTotpSetup";
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (err) {
+      console.error("Logout failed:", err);
+    } finally {
+      sessionStorage.removeItem("securebank_user");
+      setIsAuthenticated(false);
+    }
+  };
 
   return (
     <Router>
@@ -34,7 +46,7 @@ export default function App() {
         <Route path="/register/totp" element={<RegisterTotpSetup />} />
         
         {/* Protected Routes wrapped in the Layout component */}
-        <Route element={<Layout onLogout={() => setIsAuthenticated(false)} />}>
+        <Route element={<Layout onLogout={handleLogout} />}>
           <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" replace />} />
           <Route path="/history" element={isAuthenticated ? <History /> : <Navigate to="/login" replace />} />
           <Route path="/transfer" element={isAuthenticated ? <Transfer /> : <Navigate to="/login" replace />} />
