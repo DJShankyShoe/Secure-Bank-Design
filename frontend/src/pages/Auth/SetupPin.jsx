@@ -28,14 +28,11 @@ export default function SetupPin({ onSetupComplete }) {
     if (onSetupComplete) {
       onSetupComplete('customer');
     } 
-    // And instantly route them to the dashboard
     navigate('/dashboard');
   };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      
-      {/* LEFT PANEL: Branding & Engagement */}
       <div style={{ flex: '1.2', backgroundColor: '#111827', color: '#ffffff', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '600px', height: '600px', backgroundColor: '#E32636', borderRadius: '50%', filter: 'blur(120px)', opacity: '0.15', zIndex: 0 }}></div>
 
@@ -60,7 +57,7 @@ export default function SetupPin({ onSetupComplete }) {
         </div>
       </div>
 
-      {/* RIGHT PANEL: PIN Setup Form */}
+      {/* PIN Setup Form */}
       <div style={{ flex: '1', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 8%', minWidth: '500px' }}>
         
         <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
