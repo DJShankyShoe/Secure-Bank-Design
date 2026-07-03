@@ -91,6 +91,13 @@ def test_set_pin_success_and_wrong_password(require_db, txn_app):
     assert r.status_code == 401
 
 
+def test_pin_status_reflects_whether_set(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is False
+    _set_pin(c)
+    assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is True
+
+
 def test_transfer_below_threshold_moves_money(require_db, txn_app):
     c, _ = _setup_user(txn_app)
     src = _create_account(c)

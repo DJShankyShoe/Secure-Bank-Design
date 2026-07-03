@@ -15,12 +15,15 @@ from .service import (
     admin_close_account,
     approve_account_closure,
     list_all_accounts,
+    list_user_accounts,
     list_users,
     read_audit_log,
     reject_account_closure,
     reveal_nric,
+    suspend_account,
     suspend_user,
     unlock_user,
+    unsuspend_account,
 )
 
 
@@ -39,8 +42,8 @@ def _uuid(raw: str) -> uuid.UUID:
 @bp.get("/users")
 @require_role("admin")
 def users():
-    """List all users (masked NRIC) — FR-08."""
-    return jsonify(users=list_users()), 200
+    """List users (masked NRIC); optional ``?q=`` searches email/name — FR-08."""
+    return jsonify(users=list_users(search=request.args.get("q"))), 200
 
 
 @bp.get("/accounts")
@@ -48,6 +51,13 @@ def users():
 def accounts():
     """List all accounts — FR-08."""
     return jsonify(accounts=list_all_accounts()), 200
+
+
+@bp.get("/users/<user_id>/accounts")
+@require_role("admin")
+def user_accounts(user_id: str):
+    """List one user's accounts (user-directory drill-down) — FR-08."""
+    return jsonify(accounts=list_user_accounts(user_id=_uuid(user_id))), 200
 
 
 @bp.get("/audit")
@@ -139,6 +149,30 @@ def closure_reject(account_id: str):
     try:
         result = reject_account_closure(admin_id=g.user_id, account_id=_uuid(account_id),
                                         reason=_json().get("reason", ""), source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/suspend")
+@require_role("admin")
+def account_suspend(account_id: str):
+    """Suspend (freeze) a single account (admin) — FR-08. Reason required."""
+    try:
+        result = suspend_account(admin_id=g.user_id, account_id=_uuid(account_id),
+                                 reason=_json().get("reason", ""), source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/unsuspend")
+@require_role("admin")
+def account_unsuspend(account_id: str):
+    """Lift an account suspension -> active (admin) — FR-08."""
+    try:
+        result = unsuspend_account(admin_id=g.user_id, account_id=_uuid(account_id),
+                                   source_ip=client_ip())
     except AdminError as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(result), 200

@@ -238,6 +238,62 @@ def test_admin_audit_invalid_user_400(require_db, admin_client):
                             base_url=_HTTPS).status_code == 400
 
 
+def test_admin_search_users_by_email(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    r = admin_client.get(f"/admin/users?q={target['email']}", base_url=_HTTPS)
+    assert r.status_code == 200
+    emails = [u["email"] for u in r.get_json()["users"]]
+    assert emails == [target["email"]]   # the unique email matches exactly one user
+
+
+def test_admin_search_users_no_match_is_empty(require_db, admin_client):
+    r = admin_client.get("/admin/users?q=zzz-no-such-user-zzz", base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["users"] == []
+
+
+def test_admin_suspend_and_unsuspend_account(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    aid = cust.post("/accounts", json={"account_type": "savings"},
+                    base_url=_HTTPS).get_json()["account_id"]
+    # reason required
+    assert admin_client.post(f"/admin/accounts/{aid}/suspend", json={},
+                             base_url=_HTTPS).status_code == 400
+    r = admin_client.post(f"/admin/accounts/{aid}/suspend",
+                          json={"reason": "fraud review"}, base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "suspended"
+    # the owner sees the account frozen (can view it, but it's non-active)
+    assert cust.get(f"/accounts/{aid}", base_url=_HTTPS).get_json()["status"] == "suspended"
+    # lift it -> active again
+    r2 = admin_client.post(f"/admin/accounts/{aid}/unsuspend", base_url=_HTTPS)
+    assert r2.status_code == 200 and r2.get_json()["status"] == "active"
+    assert _audit_count(admin_app, event_type="ADMIN_SUSPEND_ACCOUNT",
+                        target_user_id=target["user_id"], outcome="success") == 1
+
+
+def test_admin_unsuspend_active_account_404(require_db, admin_app, admin_client):
+    # Can't unsuspend an account that isn't suspended.
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    aid = cust.post("/accounts", json={"account_type": "savings"},
+                    base_url=_HTTPS).get_json()["account_id"]
+    assert admin_client.post(f"/admin/accounts/{aid}/unsuspend",
+                             base_url=_HTTPS).status_code == 404
+
+
+def test_admin_lists_one_users_accounts(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS)
+    cust.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS)
+    r = admin_client.get(f"/admin/users/{target['user_id']}/accounts", base_url=_HTTPS)
+    assert r.status_code == 200
+    accts = r.get_json()["accounts"]
+    assert len(accts) == 2
+    assert {a["account_type"] for a in accts} == {"savings", "current"}
+    assert all({"account_number", "balance_cents", "status"} <= a.keys() for a in accts)
+
+
 def test_admin_endpoints_require_auth_401(require_db, admin_app):
     c = admin_app.test_client()
     assert c.get("/admin/users", base_url=_HTTPS).status_code == 401

@@ -13,6 +13,7 @@ from . import bp
 from .service import (
     TxnError,
     bill_payment,
+    is_transaction_pin_set,
     list_billers,
     set_transaction_pin,
     transfer,
@@ -37,6 +38,17 @@ def set_pin():
     except TxnError as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(status="pin_set"), 200
+
+
+@bp.get("/pin")
+@require_authenticated
+def pin_status():
+    """Report whether the caller has a transaction PIN set (SR-12).
+
+    Returns ``{"pin_set": bool}`` — a boolean only, never the PIN/hash — so the SPA
+    can prompt for PIN setup or show/hide the PIN field on high-value transfers.
+    """
+    return jsonify(pin_set=is_transaction_pin_set(user_id=g.user_id)), 200
 
 
 @bp.post("/transfer")

@@ -59,11 +59,19 @@ def _validate_reason(raw: str) -> str:
 # Read views
 # --------------------------------------------------------------------------- #
 
-def list_users() -> list[dict[str, Any]]:
-    """List all users with masked NRIC (admin view, FR-08)."""
+def list_users(search: Optional[str] = None) -> list[dict[str, Any]]:
+    """List users with masked NRIC (admin view, FR-08).
+
+    Optional ``search`` filters by a case-insensitive partial match on email or
+    full name (parameterised ILIKE — no raw SQL, SR-04).
+    """
     session = db.app_session()
     try:
-        rows = session.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+        stmt = select(User).order_by(User.created_at.desc())
+        if search and search.strip():
+            like = f"%{search.strip()}%"
+            stmt = stmt.where(or_(User.email.ilike(like), User.full_name.ilike(like)))
+        rows = session.execute(stmt).scalars().all()
         return [{
             "user_id": str(u.user_id),
             "email": u.email,
@@ -85,6 +93,25 @@ def list_all_accounts() -> list[dict[str, Any]]:
         return [{
             "account_id": str(a.account_id),
             "user_id": str(a.user_id),
+            "account_number": a.account_number,
+            "account_type": a.account_type,
+            "balance_cents": a.balance_cents,
+            "status": a.status,
+        } for a in rows]
+    finally:
+        session.close()
+
+
+def list_user_accounts(*, user_id: uuid.UUID) -> list[dict[str, Any]]:
+    """List one user's accounts for the admin user-directory drill-down (FR-08)."""
+    session = db.app_session()
+    try:
+        rows = session.execute(
+            select(Account).where(Account.user_id == user_id)
+            .order_by(Account.created_at.desc())
+        ).scalars().all()
+        return [{
+            "account_id": str(a.account_id),
             "account_number": a.account_number,
             "account_type": a.account_type,
             "balance_cents": a.balance_cents,
@@ -259,6 +286,54 @@ def reject_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason
     emit_audit("ADMIN_CLOSURE_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "active"}
+
+
+def suspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
+                    source_ip: str) -> dict[str, Any]:
+    """Freeze a single account (admin, FR-08). Reversible; reason logged.
+
+    Only an ``active`` account can be suspended. A ``suspended`` account is frozen
+    for transfers (the money path requires ``status=='active'``) but the owner can
+    still log in and use their other accounts.
+    """
+    reason = _validate_reason(reason)
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "active":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "suspended"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_SUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "suspended"}
+
+
+def unsuspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID,
+                      source_ip: str) -> dict[str, Any]:
+    """Lift a suspension on an account -> ``active`` (admin, FR-08)."""
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "suspended":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "active"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_UNSUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"account_id": str(account_id)})
     return {"account_id": str(account_id), "status": "active"}
 
 

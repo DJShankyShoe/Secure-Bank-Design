@@ -125,7 +125,7 @@ class Config:
     TOTP_RATE_LIMIT_PER_MIN: ClassVar[int] = 5    # TOTP attempts/min/account (SR-11)
     PIN_ATTEMPTS_PER_TXN: ClassVar[int] = 3       # PIN tries per transaction (SR-12)
     PIN_ATTEMPTS_PER_HOUR: ClassVar[int] = 5      # PIN tries/hour/account (SR-12)
-    EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 3  # email-change/unlock req/hr/account
+    EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 10  # email-change/reset/unlock req/hr/account
 
     # Argon2id parameters — password and PIN MUST differ (SR-01/SR-12).
     ARGON2_PASSWORD_TIME_COST: ClassVar[int] = 3

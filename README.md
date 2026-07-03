@@ -82,7 +82,7 @@ show `backup_codes` once.
 ```jsonc
 { "new_email": "new@b.com" }               // → 200 { "status": "verification_sent" }
 ```
-Rate-limited to 3/hour per account → `429` when exceeded. Sends a **verification link to the new
+Rate-limited to 10/hour per account → `429` when exceeded. Sends a **verification link to the new
 address** (only that confirms the change) **and a security alert to the current/old address** (no
 token) so the real owner is notified if a hijacked session tries to change the email.
 
@@ -105,7 +105,7 @@ token) so the real owner is notified if a hijacked session tries to change the e
 ```jsonc
 { "email": "a@b.com" }                      // → 200 { "status": "reset_requested" }
 ```
-Always generic (never reveals whether the email exists). Rate-limited 3/hour per account.
+Always generic (never reveals whether the email exists). Rate-limited 10/hour per account.
 
 ### `POST /auth/password/reset/verify`  — set a new password from the emailed link
 Requires **two extra factors** on top of the link — the account's **NRIC** and a **TOTP code (or a
@@ -174,6 +174,13 @@ While `close_requested` the account is **frozen** (no transfers in/out) until an
 { "password": "...", "pin": "135790" }      // → 200 { "status": "pin_set" }
 ```
 
+### `GET /transactions/pin`  — has the user set a transaction PIN yet?
+```jsonc
+// → 200 { "pin_set": true }   // or false
+```
+Boolean only (never the PIN/hash). Use it to prompt for PIN setup, or to decide whether to show the
+PIN field on a high-value (≥ SGD 1,000) transfer.
+
 ### `GET /transactions/billers`
 → `200 { "billers": [ { "biller_id": "uuid", "biller_name": "Singtel", "biller_category": "telco" } ] }`
 
@@ -210,8 +217,9 @@ a different body.
 
 | Method · Path | Body | Returns |
 |---|---|---|
-| `GET /admin/users` | — | `{ "users": [ {user_id,email,full_name,nric_masked,role,account_status,created_at} ] }` |
+| `GET /admin/users?q=` | — | `{ "users": [ {user_id,email,full_name,nric_masked,role,account_status,created_at} ] }` — optional `q` = case-insensitive search on email or name |
 | `GET /admin/accounts` | — | `{ "accounts": [ {account_id,user_id,account_number,account_type,balance_cents,status} ] }` |
+| `GET /admin/users/{id}/accounts` | — | `{ "accounts": [ {account_id,account_number,account_type,balance_cents,status} ] }` — one user's accounts (directory drill-down) |
 | `GET /admin/audit?page=&type=&user=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,target_user_id,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` — `type`=event type; `user`=UUID (events where the user is actor **or** target; `400` if not a UUID); filters compose |
 | `POST /admin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "status": "suspended" }` (reason required) |
 | `POST /admin/users/{id}/unlock` | — | `{ "status": "active" }` |
@@ -219,6 +227,8 @@ a different body.
 | `POST /admin/accounts/{id}/close` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (direct admin close; balance must be 0) |
 | `POST /admin/accounts/{id}/closure/approve` | — | `{ "account_id": "…", "status": "closed" }` (approve a customer `close_requested`; 404 if none pending; 400 if balance≠0) |
 | `POST /admin/accounts/{id}/closure/reject` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "active" }` (reject → reactivate; reason required) |
+| `POST /admin/accounts/{id}/suspend` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "suspended" }` (reversible freeze of one account; reason required; only from `active`) |
+| `POST /admin/accounts/{id}/unsuspend` | — | `{ "account_id": "…", "status": "active" }` (lift the freeze; only from `suspended`) |
 
 ---
 
