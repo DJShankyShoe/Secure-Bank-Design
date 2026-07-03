@@ -39,8 +39,13 @@ export default function Register() {
       }
     */
 
-    alert("Registration successful.");/*change verifyRegisterotp page?*/
-    navigate("/login");
+    navigate("/register/totp", {
+      state: {
+        email: formData.email,
+        provisioningUri: response.provisioning_uri,
+        backupCodes: response.backup_codes,
+      },
+    });
 
   } catch (err) {
     alert(err.message);
