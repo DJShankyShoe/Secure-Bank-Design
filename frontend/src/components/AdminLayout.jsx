@@ -1,7 +1,6 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
-// REMOVED: The escape hatch to the customer dashboard is gone
 const adminNavItems = [
   { id: "users", label: "User Directory", badge: "", path: "/admin/users" },
   { id: "openings", label: "Account Openings", badge: "1", path: "/admin/openings" },

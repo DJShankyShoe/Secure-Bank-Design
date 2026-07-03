@@ -1,7 +1,6 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
-// REMOVED: The Admin View tab has been completely stripped out
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
