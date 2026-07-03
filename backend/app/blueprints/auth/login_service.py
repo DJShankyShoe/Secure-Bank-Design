@@ -13,6 +13,7 @@ code or a one-time backup code, then create the real server-side session
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 import secrets
 import uuid
@@ -29,14 +30,15 @@ from ...config import Config
 from ...extensions import db
 from ...models import MfaBackupCode, User
 from ...security import crypto, lockout
-from ...security.sessions import create_session
-from ...security.validation import ValidationError, validate_email
+from ...security.sessions import create_session, revoke_user_sessions
+from ...security.validation import ValidationError, validate_email, validate_password
 from ...services.audit import emit_audit
 from ...services.email import render_email, send_email
 from .service import AuthServiceError, RateLimited
 
 _MFA_TOKEN_SALT = "mfa-pending-v1"
 _UNLOCK_TOKEN_SALT = "account-unlock-v1"
+_RESET_TOKEN_SALT = "password-reset-v1"
 _SIX_DIGITS = re.compile(r"^\d{6}$")
 
 # Pre-computed hash so an unknown-user login still spends ~one Argon2 verify,
@@ -52,6 +54,16 @@ class InvalidCredentials(AuthServiceError):
 class UnlockLinkInvalid(AuthServiceError):
     status = 400
     message = "Invalid or expired unlock link."
+
+
+class PasswordResetInvalid(AuthServiceError):
+    status = 400
+    message = "Invalid or expired reset link."
+
+
+class PasswordResetStepUpFailed(AuthServiceError):
+    status = 401
+    message = "Verification code is incorrect."
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -336,5 +348,151 @@ def verify_account_unlock(*, token: str, source_ip: str) -> None:
                        actor_user_id=user_id, target_user_id=user_id)
         else:
             session.rollback()  # already active/other state: no-op, generic success
+    finally:
+        session.close()
+
+
+# --------------------------------------------------------------------------- #
+# Self-service password reset — forgot password (FR-09)
+# --------------------------------------------------------------------------- #
+
+# Only these statuses may reset: 'active' (forgot password) and 'locked' (locked
+# out by failed attempts). 'suspended'/'closed'/'pending' are intentionally excluded.
+_RESETTABLE_STATUSES = ("active", "locked")
+
+
+def _reset_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt=_RESET_TOKEN_SALT)
+
+
+def _reset_fingerprint(password_hash: str) -> str:
+    """Short digest binding a reset token to the current password hash.
+
+    Resetting the password changes the hash, so a previously issued token fails
+    this check on its next use — making each link effectively single-use with no
+    server-side token store (SR-13).
+    """
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:16]
+
+
+def _read_reset_token(token: str) -> Optional[tuple[uuid.UUID, str]]:
+    """Return ``(user_id, fingerprint)`` from a valid, unexpired token, else None."""
+    try:
+        sealed, fingerprint = _reset_serializer().loads(
+            token, max_age=int(Config.EMAIL_VERIFY_TOKEN_TTL.total_seconds())
+        )
+        return _open_uid(sealed), fingerprint
+    except (BadSignature, SignatureExpired, InvalidTag, ValueError, TypeError, AttributeError):
+        return None
+
+
+def request_password_reset(*, email: str, source_ip: str) -> None:
+    """Email a 30-min single-use reset link to a registered address (FR-09).
+
+    Generic by design (anti-enumeration, SR-09): a link is sent only when the
+    account exists and is resettable; otherwise nothing happens and the caller
+    still returns the same generic response. Per-account rate-limited via the
+    shared ``email`` attempt window. The token embeds a fingerprint of the current
+    password hash, so it self-invalidates once the password changes.
+    """
+    try:
+        email = validate_email(email)
+    except ValidationError:
+        return
+
+    session = db.app_session()
+    target = None
+    token = None
+    try:
+        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if user is not None and user.account_status in _RESETTABLE_STATUSES:
+            if not lockout.is_email_action_rate_limited(session, user.user_id):
+                lockout.record_auth_attempt(session, user.user_id, "email")
+                session.commit()
+                token = _reset_serializer().dumps(
+                    [_seal_uid(user.user_id), _reset_fingerprint(user.password_hash)]
+                )
+                target = user.email
+    finally:
+        session.close()
+
+    if target and token:
+        send_email(
+            to=target,
+            subject="Reset your SecureBank password",
+            body=render_email("password_reset.txt", token=token),
+        )
+        emit_audit("PASSWORD_RESET_REQUEST", "success", source_ip=source_ip,
+                   action_detail={"email": email})
+
+
+def verify_password_reset(
+    *, token: str, new_password: str, totp_code: str, source_ip: str
+) -> None:
+    """Consume a reset token, verify a second factor, and set a new password
+    (FR-09, SR-01/11/13).
+
+    Defence in depth: a valid reset link (email access) is **not** sufficient — the
+    caller must also supply a valid **TOTP code or one-time backup code** (step-up),
+    so email compromise alone cannot take over the account. TOTP attempts are
+    rate-limited 5/min (SR-11). On success the new password is re-validated against
+    the FR-01 policy, re-hashed with Argon2id, any lockout is cleared, and ALL of
+    the user's sessions are revoked so a stolen session cannot survive the reset
+    (SR-13). Single-use via the password-hash fingerprint. Generic errors.
+    """
+    parsed = _read_reset_token(token or "")
+    if parsed is None:
+        raise PasswordResetInvalid()
+    new_password = validate_password(new_password)  # ValidationError -> 400
+    user_id, fingerprint = parsed
+
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        if user is None or user.account_status not in _RESETTABLE_STATUSES:
+            raise PasswordResetInvalid()
+        if _reset_fingerprint(user.password_hash) != fingerprint:
+            raise PasswordResetInvalid()  # token already used / password since changed
+
+        # Second factor (step-up): a valid TOTP code or a one-time backup code.
+        if lockout.is_totp_rate_limited(session, user.user_id):
+            session.commit()
+            emit_audit("PASSWORD_RESET", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "totp_rate_limited"})
+            raise RateLimited()
+        lockout.record_auth_attempt(session, user.user_id, "totp")
+
+        verified = False
+        if (totp_code and _SIX_DIGITS.match(totp_code)
+                and user.totp_seed_encrypted is not None):
+            seed = crypto.aes_decrypt(user.totp_seed_encrypted, _aes_key()).decode("utf-8")
+            if pyotp.TOTP(seed).verify(totp_code, valid_window=1):
+                verified = True
+        if not verified and totp_code and _consume_backup_code(
+            session, user.user_id, totp_code
+        ):
+            verified = True
+        if not verified:
+            session.commit()  # persist the recorded attempt
+            emit_audit("PASSWORD_RESET", "failure", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "bad_second_factor"})
+            raise PasswordResetStepUpFailed()
+
+        user.password_hash = crypto.hash_password(new_password)
+        if user.account_status == "locked":
+            user.account_status = "active"
+        lockout.reset_failed_auth(user)
+        revoke_user_sessions(session, user.user_id)
+        session.commit()
+        emit_audit("PASSWORD_RESET", "success", source_ip=source_ip,
+                   actor_user_id=user_id, target_user_id=user_id)
+    except AuthServiceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()

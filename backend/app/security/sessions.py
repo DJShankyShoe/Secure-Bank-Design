@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from flask import Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Config
@@ -76,6 +77,21 @@ def revoke_session(db_session: Session, session_id: str) -> None:
     """Immediately revoke a session (logout / privilege change), idempotently."""
     record = db_session.get(SessionRecord, session_id)
     if record is not None:
+        record.revoked = True
+
+
+def revoke_user_sessions(db_session: Session, user_id: uuid.UUID) -> None:
+    """Revoke every live session for a user (caller commits).
+
+    Used when a credential change must invalidate existing sessions everywhere —
+    e.g. a password reset (FR-09) — so a stolen session can't outlive the reset
+    (SR-13).
+    """
+    for record in db_session.execute(
+        select(SessionRecord).where(
+            SessionRecord.user_id == user_id, SessionRecord.revoked.is_(False)
+        )
+    ).scalars():
         record.revoked = True
 
 

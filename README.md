@@ -99,6 +99,24 @@ Rate-limited to 3/hour per account → `429` when exceeded.
 { "token": "..." }                          // → 200 { "status": "unlocked" }
 ```
 
+### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
+```jsonc
+{ "email": "a@b.com" }                      // → 200 { "status": "reset_requested" }
+```
+Always generic (never reveals whether the email exists). Rate-limited 3/hour per account.
+
+### `POST /auth/password/reset/verify`  — set a new password from the emailed link
+Requires a **second factor** (TOTP code or a one-time backup code) in addition to the link —
+so an attacker who only has inbox access can't reset the password.
+```jsonc
+{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "totp_code": "123456" }
+// → 200 { "status": "password_reset" }
+```
+`new_password` must meet the FR-01 policy (≥12 chars, mixed case, digit, symbol) → else `400`;
+`400` on a bad/expired/already-used token; `401` if `totp_code` is wrong; `429` on too many code
+attempts. On success **all existing sessions are revoked** and any lockout is cleared. The link is
+single-use. (`totp_code` accepts a current TOTP or any unused backup code.)
+
 ---
 
 ## Accounts — `/accounts`  *(all require auth)*
