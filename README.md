@@ -1,223 +1,73 @@
-# SecureBank Backend — API Reference
+# SecureBank - Frontend UI
 
-REST/JSON API for the SecureBank app. This document is for the frontend team.
+A premium, secure retail internet banking portal. This repository contains the frontend built to interface with the SecureBank Flask backend. 
 
-## Conventions
-- **Base URL:** same origin as the SPA (e.g. `https://securebank.space`). nginx proxies
-  `/auth`, `/accounts`, `/transactions`, `/admin` to the backend.
-- **Content type:** JSON in, JSON out. Send `Content-Type: application/json`.
-- **Money:** always integer minor units (`amount_cents`, `balance_cents`). `1000` = SGD 10.00.
-- **Timestamps:** ISO-8601 UTC. **IDs** are UUID strings; account numbers are 10-digit strings.
+The UI is designed with a focus on layered controls, high-contrast accessible design (WCAG 2.1 AA compliant), and a seamless customer experience.
 
-## Authentication & sessions
-1. **Session cookie** `sb_session` — `Secure`, `HttpOnly`, `SameSite=Strict`. Set on a successful
-   MFA login and sent automatically by the browser on same-origin requests (use
-   `credentials: "include"` for fetch). It is HttpOnly — JS cannot read it.
-2. **CSRF** — every **POST** is CSRF-protected; send the token in the **`X-CSRFToken`** header.
-   > Fetch a token from **`GET /auth/csrf`** (returns `{ "csrf_token": "..." }` and sets the session
-   > cookie), then send it as `X-CSRFToken` on every POST. Re-fetch if you get a `403`.
-3. **Two-stage login:** password → MFA. Stage 1 returns a short-lived `mfa_token` (not a session);
-   stage 2 verifies a TOTP/backup code and sets the session cookie.
+## Tech Stack
+* **Framework:** React.js (v18+)
+* **Build Tool:** Vite (for rapid HMR and optimized production builds)
+* **Routing:** React Router DOM (v6)
+* **Styling:** CSS
 
-## Error shape
-```json
-{ "error": "Plain-language message." }
-```
-| Status | Meaning |
-|---|---|
-| 400 | Validation error |
-| 401 | Not authenticated / invalid credentials |
-| 403 | CSRF failure or role denied (customer → admin) |
-| 404 | Not found / not yours (IDOR-safe) |
-| 409 | Idempotency-Key reused with a different body |
-| 413 | Request body too large (> 1 MB) |
-| 429 | Too many attempts (per-account TOTP / PIN / email-action limit) |
-| 500 | Generic server error |
-
-All responses carry `Cache-Control: no-store`.
-
-Auth failures are intentionally generic (`"Invalid credentials."`).
+## Key Features
+* **Multi-Factor Authentication:** Two-step login flow supporting NRIC/User ID, password, and 6-digit TOTP validation.
+* **Account Recovery:** Secure password reset flows requiring TOTP confirmation.
+* **Role-Based Access Control (RBAC):** Protected routing distinguishing between `customer` and `admin` views.
+* **Secure Transactions:** Fund transfers and bill payments with dynamic step-up authentication (6-digit PIN required for transfers $\ge$ SGD 1,000).
+* **Account Management:** Open new accounts, update contact preferences, and securely close accounts.
+* **Audit & History:** Filterable, paginated transaction history and an administrative operations dashboard.
 
 ---
 
-## Auth — `/auth`
+## 🚀 Local Development Setup
 
-### `GET /auth/csrf`
-Bootstrap a CSRF token for the SPA (call once before doing POSTs).
-```jsonc
-// 200
-{ "csrf_token": "..." }   // send as the X-CSRFToken header on every POST
+Follow these steps to run the frontend application locally on your machine.
+
+### Prerequisites
+* [Node.js](https://nodejs.org/) (Version 18 or higher recommended)
+* npm (comes pre-installed with Node.js)
+
+### 1. Install Dependencies
+Navigate to the root of the frontend directory and install the required packages.
+```bash
+npm install
 ```
+(Note: If you encounter Vite peer-dependency version conflicts, you can safely run npm install --legacy-peer-deps)
 
-### `POST /auth/register`
-Create a customer (status `pending` until TOTP confirmed).
-```jsonc
-// body
-{ "full_name": "Tan Ah Kow", "nric": "S1234567D", "email": "a@b.com", "password": "Str0ng!Passw0rd" }
-// 201
-{ "user_id": "uuid", "provisioning_uri": "otpauth://totp/...", "backup_codes": ["AB12CD34EF", "..."] }
+### 2. Development Server
+Launch the Vite development server
+```bash
+npm run dev
 ```
-Password policy: ≥12 chars, upper + lower + digit + symbol. Render the QR from `provisioning_uri`;
-show `backup_codes` once.
-
-### `POST /auth/register/verify-totp`
-```jsonc
-{ "email": "a@b.com", "code": "123456" }   // → 200 { "status": "active" }
-```
-
-### `POST /auth/login`  (stage 1)
-```jsonc
-{ "email": "a@b.com", "password": "..." }  // → 200 { "mfa_token": "..." }
-```
-
-### `POST /auth/login/mfa`  (stage 2 — TOTP or a backup code; sets the session cookie)
-```jsonc
-{ "mfa_token": "...", "code": "123456" }   // → 200 { "status": "ok" } + Set-Cookie
-```
-
-### `POST /auth/logout`
-→ `200 { "status": "logged_out" }` (revokes session, clears cookie).
-
-### `POST /auth/email`  *(auth required)* — request email change (30-min link to the new address)
-```jsonc
-{ "new_email": "new@b.com" }               // → 200 { "status": "verification_sent" }
-```
-Rate-limited to 3/hour per account → `429` when exceeded.
-
-### `POST /auth/email/verify`
-```jsonc
-{ "token": "..." }                          // → 200 { "status": "email_updated", "email": "new@b.com" }
-```
-
-### `POST /auth/unlock/request`  — for a locked-out account (emails a 30-min unlock link)
-```jsonc
-{ "email": "a@b.com" }                      // → 200 { "status": "unlock_requested" }
-```
-
-### `POST /auth/unlock/verify`
-```jsonc
-{ "token": "..." }                          // → 200 { "status": "unlocked" }
-```
-
-### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
-```jsonc
-{ "email": "a@b.com" }                      // → 200 { "status": "reset_requested" }
-```
-Always generic (never reveals whether the email exists). Rate-limited 3/hour per account.
-
-### `POST /auth/password/reset/verify`  — set a new password from the emailed link
-Requires a **second factor** (TOTP code or a one-time backup code) in addition to the link —
-so an attacker who only has inbox access can't reset the password.
-```jsonc
-{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "totp_code": "123456" }
-// → 200 { "status": "password_reset" }
-```
-`new_password` must meet the FR-01 policy (≥12 chars, mixed case, digit, symbol) → else `400`;
-`400` on a bad/expired/already-used token; `401` if `totp_code` is wrong; `429` on too many code
-attempts. On success **all existing sessions are revoked** and any lockout is cleared. The link is
-single-use. (`totp_code` accepts a current TOTP or any unused backup code.)
+The application will be available at http://localhost:5173. Any changes saved to the .jsx or .css files will automatically update in the browser.
 
 ---
-
-## Accounts — `/accounts`  *(all require auth)*
-
-### `POST /accounts`
-```jsonc
-{ "account_type": "savings" }               // or "current"
-// 201
-{ "account_id": "uuid", "account_number": "0123456789", "account_type": "savings",
-  "balance_cents": 0, "status": "active", "created_at": "..." }
+## Project Structure
+The codebase is modularized to strictly separate routing, layout, and domain-specific pages.
 ```
-
-### `GET /accounts`
-→ `200 { "accounts": [ { account… }, … ] }`
-
-### `GET /accounts/{account_id}`
-→ `200 { account… }` · `404` if not yours.
-
-### `GET /accounts/{account_id}/transactions`
-Paginated history, 25/page. Query params (all optional): `page` (int ≥1), `type`
-(`transfer`|`bill_payment`), `date_from` / `date_to` (`YYYY-MM-DD`, UTC, inclusive),
-`amount_min` / `amount_max` (cents).
-```jsonc
-// 200
-{ "items": [
-    { "transaction_id": "uuid", "reference_number": "TXN…", "transaction_type": "transfer",
-      "status": "complete", "amount_cents": 50000, "direction": "debit",
-      "counterparty": "9876543210", "timestamp": "..." } ],
-  "page": 1, "page_size": 25, "total": 42, "total_pages": 2 }
+frontend/
+├── src/
+│   ├── components/
+│   │   └── Layout.jsx          # Shared TopBar and Sidebar wrapper for authenticated routes
+│   ├── pages/
+│   │   ├── Accounts/           # Create.jsx, Manage.jsx
+│   │   ├── Admin/              # Panel.jsx (Protected admin view)
+│   │   ├── Auth/               # Login.jsx, Register.jsx, ForgotPassword.jsx, ResetPassword.jsx
+│   │   ├── Dashboard/          # Overview.jsx, History.jsx
+│   │   └── Transactions/       # Transfer.jsx, PayBill.jsx
+│   ├── App.jsx                 # Core React Router setup & access control
+│   ├── main.jsx                # React DOM mounting point
+│   └── styles.css              # Global application styling
+├── index.html                  # Main HTML entry point
+├── package.json                # Project metadata and dependencies
+└── vite.config.js              # Vite bundler configuration
 ```
-`direction` = `debit` (out) / `credit` (in); `counterparty` = other account number, external ref,
-or biller name.
-
-### `POST /accounts/{account_id}/close`  — requires zero balance + a fresh TOTP
-```jsonc
-{ "totp_code": "123456" }   // → 200 { account… "status": "closed" } · 400 if balance≠0 · 401 bad code
-```
-
 ---
 
-## Transactions — `/transactions`  *(all require auth)*
-
-### `POST /transactions/pin`  — set/replace the 6-digit transaction PIN (re-verifies password)
-```jsonc
-{ "password": "...", "pin": "135790" }      // → 200 { "status": "pin_set" }
-```
-
-### `GET /transactions/billers`
-→ `200 { "billers": [ { "biller_id": "uuid", "biller_name": "Singtel", "biller_category": "telco" } ] }`
-
-### `POST /transactions/transfer`
-**Header:** `Idempotency-Key: <UUIDv4>` (required; reuse the same key to safely retry).
-Destination = `destination_account_number` (internal) **or** `destination_external_ref` (external).
-**PIN required when `amount_cents` ≥ 100000 (SGD 1,000).**
-```jsonc
-{ "source_account_number": "0123456789", "destination_account_number": "9876543210",
-  "amount_cents": 50000, "pin": "135790" }   // pin only for ≥ SGD 1,000
-// 201
-{ "transaction_id": "uuid", "reference_number": "TXN…", "status": "complete",
-  "transaction_type": "transfer", "amount_cents": 50000,
-  "source_account_number": "0123456789", "destination_account_number": "9876543210",
-  "destination_external_ref": null, "pin_verified": false, "completed_at": "..." }
-```
-`403` PIN required but missing · `401` wrong PIN · `400` insufficient funds · `409` key reused with
-a different body.
-
-### `POST /transactions/bill-payment`
-**Header:** `Idempotency-Key: <UUIDv4>`.
-```jsonc
-{ "source_account_number": "0123456789", "biller_id": "uuid", "amount_cents": 30000 }
-// 201
-{ "transaction_id": "uuid", "reference_number": "TXN…", "status": "complete",
-  "transaction_type": "bill_payment", "amount_cents": 30000,
-  "source_account_number": "0123456789", "biller_id": "uuid", "biller_name": "Singtel",
-  "completed_at": "..." }
-```
+## Security Implementation Notes
+* **Input Validation:** Financial input fields use strict Regex (e.g., /^\d*\.?\d{0,2}$/) and inputMode="decimal" to prevent invalid data types or malformed floating-point numbers from entering the component state.
+* **XSS Prevention:** React JSX inherently auto-escapes all string inputs. dangerouslySetInnerHTML is strictly prohibited across the codebase.
+* **Masking:** Authenticator code inputs strip all non-numeric characters instantly to prevent injection or formatting errors.
 
 ---
-
-## Admin — `/admin`  *(require admin role; customer → 403)*
-
-| Method · Path | Body | Returns |
-|---|---|---|
-| `GET /admin/users` | — | `{ "users": [ {user_id,email,full_name,nric_masked,role,account_status,created_at} ] }` |
-| `GET /admin/accounts` | — | `{ "accounts": [ {account_id,user_id,account_number,account_type,balance_cents,status} ] }` |
-| `GET /admin/audit?page=&type=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,target_user_id,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` |
-| `POST /admin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "status": "suspended" }` (reason required) |
-| `POST /admin/users/{id}/unlock` | — | `{ "status": "active" }` |
-| `GET /admin/users/{id}/nric` | — | `{ "user_id": "…", "nric": "S1234567D", "nric_masked": "S****567D" }` (audited) |
-| `POST /admin/accounts/{id}/close` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (balance must be 0) |
-
----
-
-## Infra
-- `GET /healthz` → `200 { "status": "ok" }` (no auth; liveness probe).
-
-## Typical happy path
-`register` → `register/verify-totp` → `login` → `login/mfa` (cookie set) → `POST /accounts` →
-`GET /accounts` → (set PIN) → `POST /transactions/transfer` → `GET /accounts/{id}/transactions`.
-
-## Before integrating
-1. **CSRF flow:** call `GET /auth/csrf` once, then send the returned token as `X-CSRFToken` on every POST.
-2. Deploy **same-origin** (one domain via nginx) so the `SameSite=Strict` cookie + CSRF work — don't
-   split the API onto a different subdomain.

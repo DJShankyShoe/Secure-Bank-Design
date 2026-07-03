@@ -128,7 +128,13 @@ export default function Login({ onLoginSuccess }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <label htmlFor="password" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Password</label>
-                    <a href="#forgot" style={{ fontSize: '0.9rem', color: '#E32636', textDecoration: 'none', fontWeight: '600' }}>Forgot password?</a>
+                    <button 
+                    type="button" 
+                    onClick={() => navigate('/forgot-password')} 
+                    style={{ background: 'none', border: 'none', padding: 0, fontSize: '0.9rem', color: '#E32636', textDecoration: 'none', fontWeight: '600', cursor: 'pointer' }}
+                  > 
+                    Forgot password?
+                  </button>
                   </div>
                   <input 
                     id="password"
