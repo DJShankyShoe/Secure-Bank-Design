@@ -15,12 +15,17 @@ export default function Login({ onLoginSuccess }) {
     if (showMfa) {
       // --- MOCK MFA VERIFICATION ---
       if (totp.length === 6) {
-        // Pass the correct role back to App.jsx based on who logged in
+        
+        // Check which user is logging in
         if (credentials.userId.toUpperCase() === 'ADMIN99') {
+          // Admins go straight to their workspace
           onLoginSuccess('admin');
         } else {
-          onLoginSuccess('customer');
+          // Customers are diverted to set up their transaction PIN first.
+          // They remain unauthenticated in the App state until SetupPin completes.
+          navigate('/setup-pin');
         }
+
       } else {
         setError('Please enter a valid 6-digit code.');
       }
@@ -39,7 +44,7 @@ export default function Login({ onLoginSuccess }) {
       } 
       // 3. Fail
       else {
-        setError('Invalid NRIC/User ID or Password. Please check the mock credentials.');
+        setError('Invalid NRIC/User ID or Password. Please check your credentials.');
       }
     }
   };
@@ -70,23 +75,6 @@ export default function Login({ onLoginSuccess }) {
           <p style={{ fontSize: '1.2rem', color: '#D1D5DB', maxWidth: '480px', lineHeight: '1.6', marginBottom: '48px' }}>
             Experience next-generation digital banking protected by layered security controls. Manage your wealth with absolute confidence.
           </p>
-
-          {/* TEMPORARY DEV BOX FOR MOCK CREDENTIALS */}
-          <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderLeft: '4px solid #3B82F6', padding: '24px', borderRadius: '0 8px 8px 0', maxWidth: '500px', backdropFilter: 'blur(8px)' }}>
-            <h3 style={{ color: '#93C5FD', fontSize: '1.05rem', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
-              🛠️ Developer Testing Credentials
-            </h3>
-            <div style={{ color: '#E5E7EB', fontSize: '0.95rem', margin: 0, lineHeight: '1.6' }}>
-              <strong>Customer View:</strong><br/>
-              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>T1234567A</code><br/>
-              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
-              <div style={{ margin: '12px 0', borderTop: '1px solid #1E40AF' }}></div>
-              <strong>Admin View:</strong><br/>
-              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>ADMIN99</code><br/>
-              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>admin123</code>
-              <p style={{ marginTop: '12px', fontSize: '0.85rem', color: '#93C5FD' }}>* Enter any 6 digits for the Authenticator Code.</p>
-            </div>
-          </div>
         </div>
       </div>
 

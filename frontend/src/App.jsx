@@ -10,6 +10,7 @@ import Login from './pages/Auth/Login.jsx';
 import Register from './pages/Auth/Register.jsx';
 import ForgotPassword from './pages/Auth/ForgotPassword.jsx';
 import ResetPassword from './pages/Auth/ResetPassword.jsx';
+import SetupPin from './pages/Auth/SetupPin.jsx';
 
 // Customer Pages
 import Dashboard from './pages/Dashboard/Overview.jsx';
@@ -26,7 +27,7 @@ import AdminClosures from './pages/Admin/Closures.jsx';
 import AdminAudit from './pages/Admin/Audit.jsx';
 
 export default function App() {
-  // NEW: Track both authentication status AND the user's role
+  // Track both authentication status AND the user's role
   const [auth, setAuth] = useState({ isAuthenticated: false, role: null });
 
   // Helper function to handle logouts
@@ -50,7 +51,8 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        
+        <Route path="/setup-pin" element={<SetupPin onSetupComplete={(role) => setAuth({ isAuthenticated: true, role })} />} />
+
         {/* CUSTOMER PORTAL (Strictly locked to role === 'customer') */}
         <Route element={<Layout onLogout={handleLogout} />}>
           <Route path="/dashboard" element={auth.isAuthenticated && auth.role === 'customer' ? <Dashboard /> : <Navigate to="/login" replace />} />
