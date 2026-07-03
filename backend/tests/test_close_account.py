@@ -69,8 +69,10 @@ def test_close_zero_balance_with_totp(require_db, close_app):
     acc = _account(c)
     r = _close(c, acc["account_id"], pyotp.TOTP(secret).now())
     assert r.status_code == 200
-    assert r.get_json()["status"] == "closed"
-    assert c.get(f"/accounts/{acc['account_id']}", base_url=_HTTPS).get_json()["status"] == "closed"
+    # Close is now a REQUEST awaiting admin approval, not an immediate close.
+    assert r.get_json()["status"] == "close_requested"
+    assert c.get(f"/accounts/{acc['account_id']}",
+                 base_url=_HTTPS).get_json()["status"] == "close_requested"
 
 
 def test_close_nonzero_balance_400(require_db, close_app):
@@ -109,7 +111,7 @@ def test_close_already_closed_400(require_db, close_app):
     acc = _account(c)
     assert _close(c, acc["account_id"], pyotp.TOTP(secret).now()).status_code == 200
     r = _close(c, acc["account_id"], pyotp.TOTP(secret).now())
-    assert r.status_code == 400  # already closed
+    assert r.status_code == 400  # already has a pending closure request (not active)
 
 
 def test_close_emits_audit(require_db, close_app):
@@ -122,7 +124,8 @@ def test_close_emits_audit(require_db, close_app):
     _close(c, acc["account_id"], pyotp.TOTP(secret).now())
     with db.admin_reader_engine.connect() as conn:
         n = conn.execute(
-            text("SELECT count(*) FROM audit.audit_events WHERE event_type='ACCOUNT_CLOSE' "
+            text("SELECT count(*) FROM audit.audit_events "
+                 "WHERE event_type='ACCOUNT_CLOSURE_REQUEST' "
                  "AND outcome='success' AND action_detail->>'account_id' = :a"),
             {"a": acc["account_id"]},
         ).scalar_one()

@@ -218,10 +218,12 @@ def unlock_verify():
 def password_reset_request():
     """Request a 30-min single-use password-reset link (FR-09).
 
-    Body: ``email``. Unauthenticated. Always returns a generic 200 whether or not
-    the address is registered (anti-enumeration, SR-09).
+    Body: ``email`` + ``nric`` (both must match an existing account). Unauthenticated.
+    Always returns a generic 200 whether or not they match (anti-enumeration, SR-09).
     """
-    request_password_reset(email=_json().get("email", ""), source_ip=client_ip())
+    body = _json()
+    request_password_reset(email=body.get("email", ""), nric=body.get("nric", ""),
+                           source_ip=client_ip())
     return jsonify(status="reset_requested"), 200
 
 
@@ -231,9 +233,9 @@ def password_reset_verify():
     (FR-09, SR-01/11/13).
 
     Body: ``token`` (from the emailed link), ``new_password``, and ``totp_code``
-    (a TOTP code or a one-time backup code). Revokes all existing sessions on
-    success. Generic errors only (400 bad token / weak password, 401 bad code,
-    429 too many code attempts).
+    (a TOTP code or a one-time backup code). Identity (email + NRIC) was already
+    proven at the request step. Revokes all existing sessions on success. Generic
+    errors only (400 bad token / weak password, 401 bad code, 429 too many attempts).
     """
     body = _json()
     try:

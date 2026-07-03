@@ -59,7 +59,8 @@ def _to(app, address):
 
 
 def _token_from(body: str) -> str:
-    return body.split("token: ")[1].split("\n")[0].strip()
+    # token now lives inside a clickable link: .../verify-email?token=<tok>
+    return body.split("token=")[1].split()[0].strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -71,7 +72,18 @@ def test_request_sends_link_to_new_address(require_db, em_app):
     r = c.post("/auth/email", json={"new_email": new}, base_url=_HTTPS)
     assert r.status_code == 200
     msgs = _to(em_app, new)
-    assert len(msgs) == 1 and "token: " in msgs[0]["body"]
+    assert len(msgs) == 1 and "token=" in msgs[0]["body"]
+
+
+def test_old_address_gets_security_alert(require_db, em_app):
+    c, old = _login(em_app)
+    new = _email()
+    _outbox(em_app).clear()
+    c.post("/auth/email", json={"new_email": new}, base_url=_HTTPS)
+    alerts = _to(em_app, old)
+    assert len(alerts) == 1                      # the old address is alerted
+    assert new in alerts[0]["body"]              # tells them the target address
+    assert "token=" not in alerts[0]["body"]     # but carries no confirm token
 
 
 def test_verify_swaps_email_and_login_follows(require_db, em_app):

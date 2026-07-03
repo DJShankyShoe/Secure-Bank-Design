@@ -13,9 +13,11 @@ from . import bp
 from .service import (
     AdminError,
     admin_close_account,
+    approve_account_closure,
     list_all_accounts,
     list_users,
     read_audit_log,
+    reject_account_closure,
     reveal_nric,
     suspend_user,
     unlock_user,
@@ -51,12 +53,24 @@ def accounts():
 @bp.get("/audit")
 @require_role("admin")
 def audit():
-    """Read the audit log via the SELECT-only admin_reader engine (FR-08, SR-14)."""
+    """Read the audit log via the SELECT-only admin_reader engine (FR-08, SR-14).
+
+    Query params (optional): ``page``, ``type`` (event type), ``user`` (a UUID —
+    returns events where that user is the actor or the target).
+    """
     try:
         page = int(request.args.get("page", "1"))
     except ValueError:
         return jsonify(error="page must be an integer."), 400
-    return jsonify(read_audit_log(page=page, event_type=request.args.get("type"))), 200
+    user_arg = request.args.get("user")
+    user_id = None
+    if user_arg:
+        try:
+            user_id = uuid.UUID(user_arg)
+        except ValueError:
+            return jsonify(error="user must be a valid UUID."), 400
+    return jsonify(read_audit_log(page=page, event_type=request.args.get("type"),
+                                  user_id=user_id)), 200
 
 
 @bp.post("/users/<user_id>/suspend")
@@ -101,6 +115,30 @@ def close(account_id: str):
     try:
         result = admin_close_account(admin_id=g.user_id, account_id=_uuid(account_id),
                                      reason=_json().get("reason", ""), source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/closure/approve")
+@require_role("admin")
+def closure_approve(account_id: str):
+    """Approve a pending customer closure request -> close the account (FR-05/08)."""
+    try:
+        result = approve_account_closure(admin_id=g.user_id, account_id=_uuid(account_id),
+                                         source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/closure/reject")
+@require_role("admin")
+def closure_reject(account_id: str):
+    """Reject a pending customer closure request -> reactivate it (FR-05/08). Reason required."""
+    try:
+        result = reject_account_closure(admin_id=g.user_id, account_id=_uuid(account_id),
+                                        reason=_json().get("reason", ""), source_ip=client_ip())
     except AdminError as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(result), 200

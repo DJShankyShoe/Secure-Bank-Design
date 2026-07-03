@@ -106,6 +106,7 @@ class Config:
     smtp_from: str
     totp_issuer: str
     force_https: bool
+    frontend_base_url: str  # origin of the SPA; used to build clickable email links (FR-04/09)
     cleanup_interval_seconds: int  # in-app prune cadence; 0 disables (use external cron)
 
     # ── Centralised security thresholds / tunables ────────────────
@@ -201,6 +202,9 @@ class Config:
             smtp_from=_require(env, "SMTP_FROM"),
             totp_issuer=_require(env, "TOTP_ISSUER"),
             force_https=_as_bool(_optional(env, "FORCE_HTTPS"), default=True),
+            frontend_base_url=(
+                _optional(env, "FRONTEND_BASE_URL") or "https://securebang.space"
+            ).rstrip("/"),
             cleanup_interval_seconds=_as_int(
                 _optional(env, "CLEANUP_INTERVAL_SECONDS"), default=3600,
                 name="CLEANUP_INTERVAL_SECONDS"),

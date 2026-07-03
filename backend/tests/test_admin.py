@@ -172,6 +172,72 @@ def test_admin_reads_audit_log(require_db, admin_client):
     assert "event_type" in body["items"][0]
 
 
+# --------------------------------------------------------------------------- #
+# Customer-requested closure -> admin approve / reject (FR-05)
+# --------------------------------------------------------------------------- #
+
+def _request_closure(app, creds) -> str:
+    """Customer opens an account and requests its closure; returns the account_id."""
+    cust = _client(app, creds)
+    acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    r = cust.post(f"/accounts/{acc['account_id']}/close",
+                  json={"totp_code": pyotp.TOTP(creds["secret"]).now()}, base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "close_requested"
+    return acc["account_id"]
+
+
+def test_admin_approves_closure_request(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    acc_id = _request_closure(admin_app, target)
+    r = admin_client.post(f"/admin/accounts/{acc_id}/closure/approve", base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "closed"
+    assert _audit_count(admin_app, event_type="ADMIN_CLOSURE_APPROVE",
+                        target_user_id=target["user_id"], outcome="success") == 1
+
+
+def test_admin_rejects_closure_request_reactivates(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    acc_id = _request_closure(admin_app, target)
+    # Reason is required.
+    assert admin_client.post(f"/admin/accounts/{acc_id}/closure/reject", json={},
+                             base_url=_HTTPS).status_code == 400
+    r = admin_client.post(f"/admin/accounts/{acc_id}/closure/reject",
+                          json={"reason": "keep it open"}, base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "active"
+    assert _audit_count(admin_app, event_type="ADMIN_CLOSURE_REJECT",
+                        target_user_id=target["user_id"], outcome="success") == 1
+
+
+def test_admin_approve_without_pending_request_404(require_db, admin_app, admin_client):
+    # An active account with no closure request cannot be approved.
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    assert admin_client.post(f"/admin/accounts/{acc['account_id']}/closure/approve",
+                             base_url=_HTTPS).status_code == 404
+
+
+def test_admin_audit_filter_by_user(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    tid = target["user_id"]
+    # Generate an event that involves this user (admin suspends them).
+    admin_client.post(f"/admin/users/{tid}/suspend",
+                      json={"reason": "audit filter test"}, base_url=_HTTPS)
+    r = admin_client.get(f"/admin/audit?user={tid}", base_url=_HTTPS)
+    assert r.status_code == 200
+    items = r.get_json()["items"]
+    assert len(items) >= 1
+    # Every returned event involves this user as actor or target — and none belongs
+    # only to some other user.
+    assert all(tid in (i["actor_user_id"], i["target_user_id"]) for i in items)
+    assert any(i["event_type"] == "ADMIN_SUSPEND_USER" for i in items)
+
+
+def test_admin_audit_invalid_user_400(require_db, admin_client):
+    assert admin_client.get("/admin/audit?user=not-a-uuid",
+                            base_url=_HTTPS).status_code == 400
+
+
 def test_admin_endpoints_require_auth_401(require_db, admin_app):
     c = admin_app.test_client()
     assert c.get("/admin/users", base_url=_HTTPS).status_code == 401

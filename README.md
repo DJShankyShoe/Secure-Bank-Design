@@ -82,7 +82,9 @@ show `backup_codes` once.
 ```jsonc
 { "new_email": "new@b.com" }               // → 200 { "status": "verification_sent" }
 ```
-Rate-limited to 3/hour per account → `429` when exceeded.
+Rate-limited to 3/hour per account → `429` when exceeded. Sends a **verification link to the new
+address** (only that confirms the change) **and a security alert to the current/old address** (no
+token) so the real owner is notified if a hijacked session tries to change the email.
 
 ### `POST /auth/email/verify`
 ```jsonc
@@ -106,16 +108,20 @@ Rate-limited to 3/hour per account → `429` when exceeded.
 Always generic (never reveals whether the email exists). Rate-limited 3/hour per account.
 
 ### `POST /auth/password/reset/verify`  — set a new password from the emailed link
-Requires a **second factor** (TOTP code or a one-time backup code) in addition to the link —
-so an attacker who only has inbox access can't reset the password.
+Requires **two extra factors** on top of the link — the account's **NRIC** and a **TOTP code (or a
+one-time backup code)** — so inbox access alone can't reset the password.
 ```jsonc
-{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "totp_code": "123456" }
+{ "token": "...", "new_password": "N3w!Str0ngPassw0rd", "nric": "S1234567D", "totp_code": "123456" }
 // → 200 { "status": "password_reset" }
 ```
 `new_password` must meet the FR-01 policy (≥12 chars, mixed case, digit, symbol) → else `400`;
-`400` on a bad/expired/already-used token; `401` if `totp_code` is wrong; `429` on too many code
-attempts. On success **all existing sessions are revoked** and any lockout is cleared. The link is
-single-use. (`totp_code` accepts a current TOTP or any unused backup code.)
+`400` on a bad/expired/already-used token or malformed NRIC; `401` if the NRIC or `totp_code` is
+wrong (same generic error for either); `429` on too many attempts. On success **all existing
+sessions are revoked** and any lockout is cleared. The link is single-use. (`totp_code` accepts a
+current TOTP or any unused backup code.)
+
+> The reset email contains a **clickable link** (`<FRONTEND_BASE_URL>/reset-password?token=…`), not a
+> raw token; the SPA reads `token` from the query string. The verify/unlock emails work the same way.
 
 ---
 
@@ -150,10 +156,14 @@ Paginated history, 25/page. Query params (all optional): `page` (int ≥1), `typ
 `direction` = `debit` (out) / `credit` (in); `counterparty` = other account number, external ref,
 or biller name.
 
-### `POST /accounts/{account_id}/close`  — requires zero balance + a fresh TOTP
+### `POST /accounts/{account_id}/close`  — **request** closure (zero balance + fresh TOTP)
+This does **not** close the account immediately — it submits a request an admin must approve.
 ```jsonc
-{ "totp_code": "123456" }   // → 200 { account… "status": "closed" } · 400 if balance≠0 · 401 bad code
+{ "totp_code": "123456" }
+// → 200 { account… "status": "close_requested" } · 400 if balance≠0 · 401 bad code
 ```
+While `close_requested` the account is **frozen** (no transfers in/out) until an admin approves
+(→ `closed`) or rejects (→ `active`).
 
 ---
 
@@ -202,11 +212,13 @@ a different body.
 |---|---|---|
 | `GET /admin/users` | — | `{ "users": [ {user_id,email,full_name,nric_masked,role,account_status,created_at} ] }` |
 | `GET /admin/accounts` | — | `{ "accounts": [ {account_id,user_id,account_number,account_type,balance_cents,status} ] }` |
-| `GET /admin/audit?page=&type=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,target_user_id,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` |
+| `GET /admin/audit?page=&type=&user=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,target_user_id,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` — `type`=event type; `user`=UUID (events where the user is actor **or** target; `400` if not a UUID); filters compose |
 | `POST /admin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "status": "suspended" }` (reason required) |
 | `POST /admin/users/{id}/unlock` | — | `{ "status": "active" }` |
 | `GET /admin/users/{id}/nric` | — | `{ "user_id": "…", "nric": "S1234567D", "nric_masked": "S****567D" }` (audited) |
-| `POST /admin/accounts/{id}/close` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (balance must be 0) |
+| `POST /admin/accounts/{id}/close` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (direct admin close; balance must be 0) |
+| `POST /admin/accounts/{id}/closure/approve` | — | `{ "account_id": "…", "status": "closed" }` (approve a customer `close_requested`; 404 if none pending; 400 if balance≠0) |
+| `POST /admin/accounts/{id}/closure/reject` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "active" }` (reject → reactivate; reason required) |
 
 ---
 

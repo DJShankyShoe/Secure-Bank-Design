@@ -55,7 +55,8 @@ def _to(app, address):
 
 
 def _token_from(body: str) -> str:
-    return body.split("token: ")[1].split("\n")[0].strip()
+    # token now lives inside a clickable link: .../unlock?token=<tok>
+    return body.split("token=")[1].split()[0].strip()
 
 
 # --------------------------------------------------------------------------- #

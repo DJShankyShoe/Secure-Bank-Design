@@ -14,11 +14,11 @@ from ...services.audit import client_ip
 from . import bp
 from .service import (
     AccountActionError,
-    close_account,
     create_account,
     get_account,
     get_account_transactions,
     list_accounts,
+    request_account_closure,
     serialize_account,
 )
 
@@ -155,10 +155,12 @@ def history(account_id: str):
 @bp.post("/<account_id>/close")
 @require_authenticated
 def close(account_id: str):
-    """Close one of the user's accounts (FR-05).
+    """Request closure of one of the user's accounts (FR-05).
 
-    Body: ``totp_code``. Requires a zero balance and a fresh TOTP step-up.
-    Returns 200 with the closed account; 404 if not owned (IDOR).
+    Body: ``totp_code``. Requires a zero balance and a fresh TOTP step-up. This does
+    NOT close the account immediately — it moves it to ``close_requested`` (which
+    freezes transfers) pending an admin approve/reject. Returns 200 with the account
+    (``status: close_requested``); 404 if not owned (IDOR).
     """
     try:
         parsed = uuid.UUID(account_id)
@@ -171,8 +173,9 @@ def close(account_id: str):
 
     body = _json()
     try:
-        result = close_account(user_id=g.user_id, account_id=parsed,
-                               totp_code=body.get("totp_code", ""), source_ip=client_ip())
+        result = request_account_closure(user_id=g.user_id, account_id=parsed,
+                                         totp_code=body.get("totp_code", ""),
+                                         source_ip=client_ip())
     except ValidationError as exc:
         return jsonify(error=exc.message), 400
     except AccountActionError as exc:

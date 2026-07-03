@@ -105,7 +105,9 @@ class Account(Base):
 
     ``user_id`` ownership is verified server-side on every read (SR-13).
     ``account_number`` is server-generated and unguessable. Closure requires a
-    zero balance (enforced in service logic + the ``status`` CHECK).
+    zero balance and is a two-step flow (FR-05): the customer requests it
+    (``status`` -> ``close_requested``, which freezes transfers) and an admin
+    approves (-> ``closed``) or rejects (-> ``active``).
     """
 
     __tablename__ = "accounts"
@@ -114,7 +116,8 @@ class Account(Base):
             "account_type IN ('savings','current')", name="accounts_type_check"
         ),
         CheckConstraint("balance_cents >= 0", name="accounts_balance_nonneg_check"),
-        CheckConstraint("status IN ('active','closed')", name="accounts_status_check"),
+        CheckConstraint("status IN ('active','close_requested','closed')",
+                        name="accounts_status_check"),
         {"schema": "application"},
     )
 

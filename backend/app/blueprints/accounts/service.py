@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from math import ceil
 from typing import Any, Optional
 
@@ -259,13 +259,16 @@ def get_account_transactions(
     }
 
 
-def close_account(*, user_id: uuid.UUID, account_id: uuid.UUID, totp_code: str,
-                  source_ip: str) -> dict[str, Any]:
-    """Close one of the user's accounts (FR-05).
+def request_account_closure(*, user_id: uuid.UUID, account_id: uuid.UUID, totp_code: str,
+                            source_ip: str) -> dict[str, Any]:
+    """Request closure of one of the user's accounts (FR-05).
 
-    Requires a zero balance and a **fresh TOTP step-up** (SR-11). The account row
-    is locked ``FOR UPDATE`` while checked. Failed step-ups are rate-limited and
-    count toward the lockout (SR-09). Audited.
+    Closure is a two-step flow: the customer requests it here (requires a zero
+    balance and a **fresh TOTP step-up**, SR-11) and an admin approves or rejects
+    it. On success the account moves to ``close_requested`` — which freezes
+    transfers until an admin decides. The row is locked ``FOR UPDATE`` while
+    checked; failed step-ups are rate-limited and count toward the lockout (SR-09).
+    Audited.
     """
     totp_code = validate_totp_code(totp_code)
     key = current_app.extensions["securebank_config"].aes_encryption_key
@@ -280,33 +283,36 @@ def close_account(*, user_id: uuid.UUID, account_id: uuid.UUID, totp_code: str,
             raise AccountNotOpen()
         if account.balance_cents != 0:
             session.rollback()
-            emit_audit("ACCOUNT_CLOSE", "failure", source_ip=source_ip, actor_user_id=user_id,
-                       target_user_id=user_id, action_detail={"reason": "non_zero_balance",
-                                                              "account_id": str(account_id)})
+            emit_audit("ACCOUNT_CLOSURE_REQUEST", "failure", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "non_zero_balance",
+                                      "account_id": str(account_id)})
             raise NonZeroBalance()
 
         user = session.get(User, user_id)
         lockout.clear_expired_lock(user)
         if lockout.is_account_locked(user):
             session.commit()
-            emit_audit("ACCOUNT_CLOSE", "denied", source_ip=source_ip, actor_user_id=user_id,
-                       target_user_id=user_id, action_detail={"reason": "locked"})
+            emit_audit("ACCOUNT_CLOSURE_REQUEST", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "locked"})
             raise StepUpFailed()
         if lockout.is_totp_rate_limited(session, user_id):
             session.commit()
-            emit_audit("ACCOUNT_CLOSE", "denied", source_ip=source_ip, actor_user_id=user_id,
-                       target_user_id=user_id, action_detail={"reason": "totp_rate_limited"})
+            emit_audit("ACCOUNT_CLOSURE_REQUEST", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "totp_rate_limited"})
             raise StepUpRateLimited()
         lockout.record_auth_attempt(session, user_id, "totp")
         if not verify_totp(user.totp_seed_encrypted, totp_code, key):
             lockout.register_failed_auth(user)
             session.commit()
-            emit_audit("ACCOUNT_CLOSE", "failure", source_ip=source_ip, actor_user_id=user_id,
-                       target_user_id=user_id, action_detail={"reason": "bad_totp"})
+            emit_audit("ACCOUNT_CLOSURE_REQUEST", "failure", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "bad_totp"})
             raise StepUpFailed()
 
-        account.status = "closed"
-        account.closed_at = datetime.now(timezone.utc)
+        account.status = "close_requested"  # frozen; awaits admin approval
         lockout.reset_failed_auth(user)
         session.commit()
         result = serialize_account(account)
@@ -318,7 +324,7 @@ def close_account(*, user_id: uuid.UUID, account_id: uuid.UUID, totp_code: str,
     finally:
         session.close()
 
-    emit_audit("ACCOUNT_CLOSE", "success", source_ip=source_ip, actor_user_id=user_id,
-               actor_role="customer", target_user_id=user_id,
+    emit_audit("ACCOUNT_CLOSURE_REQUEST", "success", source_ip=source_ip,
+               actor_user_id=user_id, actor_role="customer", target_user_id=user_id,
                action_detail={"account_id": str(account_id)})
     return result

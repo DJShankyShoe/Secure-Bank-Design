@@ -45,7 +45,7 @@ CREATE TABLE application.accounts (
   account_type    varchar(16) NOT NULL CHECK (account_type IN ('savings','current')),
   balance_cents   bigint      NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
   status          varchar(16) NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active','closed')),               -- close requires balance 0 (FR-05)
+                    CHECK (status IN ('active','close_requested','closed')),  -- close is a request; admin approves (FR-05)
   created_at      timestamptz NOT NULL DEFAULT NOW(),
   updated_at      timestamptz NOT NULL DEFAULT NOW(),
   closed_at       timestamptz

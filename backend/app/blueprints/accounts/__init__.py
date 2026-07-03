@@ -1,4 +1,6 @@
-"""Accounts blueprint."""
+"""Accounts blueprint: create, view, transaction history, close (FR-02/03/05).
+Routes added in later steps.
+"""
 
 from flask import Blueprint
 
