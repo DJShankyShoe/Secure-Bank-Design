@@ -152,6 +152,11 @@ class Config:
     # the session itself lives server-side.
     SESSION_COOKIE_NAME: ClassVar[str] = "sb_session"
     SESSION_COOKIE_SAMESITE: ClassVar[str] = "Strict"
+    # Flask's OWN signed-session cookie (used only to hold the Flask-WTF CSRF
+    # secret) MUST have a different name from the server-side session cookie above,
+    # or MFA login (which sets sb_session to the opaque server token) would clobber
+    # the CSRF state and every later POST would fail CSRF (SR-05).
+    CSRF_SESSION_COOKIE_NAME: ClassVar[str] = "sb_csrf"
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Config":
@@ -223,7 +228,9 @@ class Config:
         """
         return {
             "SECRET_KEY": self.secret_key,
-            "SESSION_COOKIE_NAME": self.SESSION_COOKIE_NAME,
+            # Flask's signed session (CSRF secret only) — distinct name from the
+            # server-side session cookie so login can't overwrite the CSRF state.
+            "SESSION_COOKIE_NAME": self.CSRF_SESSION_COOKIE_NAME,
             "SESSION_COOKIE_HTTPONLY": True,
             "SESSION_COOKIE_SECURE": self.force_https,
             "SESSION_COOKIE_SAMESITE": self.SESSION_COOKIE_SAMESITE,
