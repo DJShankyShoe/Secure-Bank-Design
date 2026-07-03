@@ -6,28 +6,51 @@ export default function Login({ onLoginSuccess }) {
   const [showMfa, setShowMfa] = useState(false);
   const [credentials, setCredentials] = useState({ userId: '', password: '' });
   const [totp, setTotp] = useState('');
+  const [error, setError] = useState('');
 
   const handlePrimaryAction = (e) => {
     e.preventDefault();
+    setError('');
+
     if (showMfa) {
-      console.log("Verifying TOTP:", totp);
-      onLoginSuccess(); 
+      // --- MOCK MFA VERIFICATION ---
+      if (totp.length === 6) {
+        // Pass the correct role back to App.jsx based on who logged in
+        if (credentials.userId.toUpperCase() === 'ADMIN99') {
+          onLoginSuccess('admin');
+        } else {
+          onLoginSuccess('customer');
+        }
+      } else {
+        setError('Please enter a valid 6-digit code.');
+      }
     } else {
-      console.log("Verifying credentials for:", credentials.userId);
-      setShowMfa(true); 
+      // --- MOCK CREDENTIAL VERIFICATION ---
+      const uid = credentials.userId.toUpperCase();
+      const pwd = credentials.password;
+
+      // 1. Check for Mock Customer
+      if (uid === 'T1234567A' && pwd === 'password123') {
+        setShowMfa(true);
+      } 
+      // 2. Check for Mock Admin
+      else if (uid === 'ADMIN99' && pwd === 'admin123') {
+        setShowMfa(true);
+      } 
+      // 3. Fail
+      else {
+        setError('Invalid NRIC/User ID or Password. Please check the mock credentials.');
+      }
     }
   };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       
-      {/* LEFT PANEL: Branding & Engagement (Dark Mode for High Contrast) */}
+      {/* LEFT PANEL: Branding & Engagement */}
       <div style={{ flex: '1.2', backgroundColor: '#111827', color: '#ffffff', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-        
-        {/* Subtle Background Accent */}
         <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '600px', height: '600px', backgroundColor: '#E32636', borderRadius: '50%', filter: 'blur(120px)', opacity: '0.15', zIndex: 0 }}></div>
 
-        {/* Header / Logo */}
         <div style={{ padding: '40px 60px', zIndex: 1, display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ backgroundColor: '#E32636', color: '#ffffff', width: '48px', height: '48px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.4rem', letterSpacing: '-1px' }}>
             SB
@@ -38,7 +61,6 @@ export default function Login({ onLoginSuccess }) {
           </div>
         </div>
 
-        {/* Hero Content */}
         <div style={{ padding: '60px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', zIndex: 1 }}>
           <h1 style={{ fontSize: '3.5rem', fontWeight: '800', lineHeight: '1.1', marginBottom: '24px', color: '#F9FAFB' }}>
             Secure.<br />
@@ -49,20 +71,26 @@ export default function Login({ onLoginSuccess }) {
             Experience next-generation digital banking protected by layered security controls. Manage your wealth with absolute confidence.
           </p>
 
-          {/* High-Contrast Advisory Box */}
-          <div style={{ backgroundColor: 'rgba(254, 242, 242, 0.1)', borderLeft: '4px solid #EF4444', padding: '24px', borderRadius: '0 8px 8px 0', maxWidth: '500px', backdropFilter: 'blur(8px)' }}>
-            <h3 style={{ color: '#FCA5A5', fontSize: '1.05rem', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
-              <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-              Security Advisory
+          {/* TEMPORARY DEV BOX FOR MOCK CREDENTIALS */}
+          <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderLeft: '4px solid #3B82F6', padding: '24px', borderRadius: '0 8px 8px 0', maxWidth: '500px', backdropFilter: 'blur(8px)' }}>
+            <h3 style={{ color: '#93C5FD', fontSize: '1.05rem', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
+              🛠️ Developer Testing Credentials
             </h3>
-            <p style={{ color: '#E5E7EB', fontSize: '0.95rem', margin: 0, lineHeight: '1.6' }}>
-              We will never ask for your password, PIN, or SMS OTP over the phone, email, or messaging apps. Always verify the website URL before logging in.
-            </p>
+            <div style={{ color: '#E5E7EB', fontSize: '0.95rem', margin: 0, lineHeight: '1.6' }}>
+              <strong>Customer View:</strong><br/>
+              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>T1234567A</code><br/>
+              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
+              <div style={{ margin: '12px 0', borderTop: '1px solid #1E40AF' }}></div>
+              <strong>Admin View:</strong><br/>
+              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>ADMIN99</code><br/>
+              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>admin123</code>
+              <p style={{ marginTop: '12px', fontSize: '0.85rem', color: '#93C5FD' }}>* Enter any 6 digits for the Authenticator Code.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* RIGHT PANEL: Authentication Form (Light Mode) */}
+      {/* RIGHT PANEL: Authentication Form */}
       <div style={{ flex: '1', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 8%', minWidth: '500px' }}>
         
         <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
@@ -80,15 +108,22 @@ export default function Login({ onLoginSuccess }) {
             </p>
           </div>
 
+          {error && (
+            <div style={{ padding: '12px 16px', backgroundColor: '#FEF2F2', border: '1px solid #F87171', color: '#B91C1C', borderRadius: '8px', marginBottom: '24px', fontSize: '0.95rem', fontWeight: '500' }}>
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handlePrimaryAction} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {!showMfa ? (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>User ID</label>
+                  <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>NRIC / User ID</label>
                   <input 
                     id="userId"
                     type="text" 
                     required
+                    placeholder="e.g. T1234567A" 
                     value={credentials.userId}
                     onChange={(e) => setCredentials({...credentials, userId: e.target.value})}
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
@@ -100,18 +135,13 @@ export default function Login({ onLoginSuccess }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <label htmlFor="password" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Password</label>
-                    <button 
-                    type="button" 
-                    onClick={() => navigate('/forgot-password')} 
-                    style={{ background: 'none', border: 'none', padding: 0, fontSize: '0.9rem', color: '#E32636', textDecoration: 'none', fontWeight: '600', cursor: 'pointer' }}
-                  > 
-                    Forgot password?
-                  </button>
+                    <button type="button" onClick={() => navigate('/forgot-password')} style={{ fontSize: '0.9rem', color: '#E32636', border: 'none', background: 'none', padding: 0, fontWeight: '600', cursor: 'pointer' }}>Forgot password?</button>
                   </div>
                   <input 
                     id="password"
                     type="password" 
                     required
+                    placeholder="Enter your password" 
                     value={credentials.password}
                     onChange={(e) => setCredentials({...credentials, password: e.target.value})}
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }}
@@ -170,14 +200,7 @@ export default function Login({ onLoginSuccess }) {
           </form>
         </div>
 
-        {/* Minimal Footer */}
-        <div style={{ position: 'absolute', bottom: '32px', right: '8%', display: 'flex', gap: '24px', fontSize: '0.85rem', color: '#9CA3AF', fontWeight: '500' }}>
-          <a href="#help" style={{ color: 'inherit', textDecoration: 'none' }}>Help Centre</a>
-          <a href="#privacy" style={{ color: 'inherit', textDecoration: 'none' }}>Privacy</a>
-          <a href="#terms" style={{ color: 'inherit', textDecoration: 'none' }}>Terms</a>
-        </div>
       </div>
-
     </div>
   );
 }

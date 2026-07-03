@@ -1,14 +1,13 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
+// REMOVED: The Admin View tab has been completely stripped out
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
-  { id: "settings", label: "Security Settings", badge: "TBD", path: "/settings" },
-  { id: "admin", label: "Admin View", badge: "ADMIN ONLY", path: "/admin" },
 ];
 
 export default function Layout({ onLogout }) {
@@ -36,7 +35,6 @@ export default function Layout({ onLogout }) {
           <div className="profile-card">
             <div className="avatar">BJ</div>
             <strong>Bobby Jones</strong>
-            <p>Retail Customer</p>
           </div>
           <div className="nav-group">
             <div className="nav-label"></div>
@@ -54,7 +52,6 @@ export default function Layout({ onLogout }) {
         </aside>
 
         <main className="main-panel">
-          {/* This Outlet is the "window" where Dashboard, Transfer, etc. will render */}
           <Outlet /> 
         </main>
       </div>
