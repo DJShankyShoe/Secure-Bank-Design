@@ -4,7 +4,6 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
   { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
-  { id: "open-account", label: "Open Account", badge: "", path: "/accounts/create" },
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
@@ -30,7 +29,7 @@ export default function Layout({ onLogout }) {
     .slice(0, 2)
     .toUpperCase();
 
-  const roleLabel = storedUser.role || "Retail Customer";
+  const roleLabel = storedUser.role || "Retail";
 
   return (
     <div className="app-shell">
