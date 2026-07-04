@@ -289,6 +289,57 @@ def reject_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason
     return {"account_id": str(account_id), "status": "active"}
 
 
+def approve_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID,
+                            source_ip: str) -> dict[str, Any]:
+    """Approve a new account opening request -> activate it (FR-02/08).
+
+    Only acts on an account in ``open_requested``. Audited with the admin as actor.
+    """
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "open_requested":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "active"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_OPEN_APPROVE", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "active"}
+
+
+def reject_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
+                           source_ip: str) -> dict[str, Any]:
+    """Reject a new account opening request -> close it (FR-02/08). Reason logged.
+
+    Only acts on an account in ``open_requested`` (never activated), which becomes
+    ``closed``. Audited with the admin as actor.
+    """
+    reason = _validate_reason(reason)
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "open_requested":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "closed"
+        account.closed_at = _now()
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_OPEN_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "closed"}
+
+
 def suspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
                     source_ip: str) -> dict[str, Any]:
     """Freeze a single account (admin, FR-08). Reversible; reason logged.

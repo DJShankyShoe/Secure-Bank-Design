@@ -64,10 +64,12 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /auth/password/reset/request` | Public | Email a reset link (needs email **+ NRIC**) |
 | `GET /auth/password/reset/check` | Public | Is a reset token still valid? (call on page load) |
 | `POST /auth/password/reset/verify` | Token | Set a new password (token + TOTP) |
-| `POST /accounts` | Auth | Open a savings/current account |
+| `POST /accounts` | Auth | Request a new account (→ `open_requested`, needs admin approval) |
 | `GET /accounts` | Auth | List own accounts |
 | `GET /accounts/{id}` | Auth | View one account |
 | `GET /accounts/{id}/transactions` | Auth | Paginated, filterable history |
+| `GET /accounts/preferences` | Auth | View notification preferences |
+| `PUT /accounts/preferences` | Auth | Update notification preferences |
 | `POST /accounts/{id}/close` | Auth | Request closure (→ admin approval) |
 | `POST /transactions/pin` | Auth | Set/replace the transaction PIN |
 | `GET /transactions/pin` | Auth | Whether a PIN is set (`pin_set`) |
@@ -81,6 +83,8 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `GET /admin/users/{id}/nric` | Admin | Reveal full NRIC (audited) |
 | `POST /admin/users/{id}/suspend` | Admin | Suspend a user |
 | `POST /admin/users/{id}/unlock` | Admin | Unlock/reactivate a user |
+| `POST /admin/accounts/{id}/opening/approve` | Admin | Approve a new account opening |
+| `POST /admin/accounts/{id}/opening/reject` | Admin | Reject a new account opening |
 | `POST /admin/accounts/{id}/close` | Admin | Direct-close an account |
 | `POST /admin/accounts/{id}/closure/approve` | Admin | Approve a customer close request |
 | `POST /admin/accounts/{id}/closure/reject` | Admin | Reject a close request |
@@ -232,13 +236,15 @@ On success **all existing sessions are revoked** and any lockout is cleared. The
 
 ## Accounts — `/accounts`  *(all require auth)*
 
-### `POST /accounts`
+### `POST /accounts`  — **request** a new account (needs admin approval)
+The account is created **frozen** (`open_requested`) and can't transact until an admin approves it.
 ```jsonc
 { "account_type": "savings" }               // or "current"
 // 201
 { "account_id": "uuid", "account_number": "0123456789", "account_type": "savings",
-  "balance_cents": 0, "status": "active", "created_at": "..." }
+  "balance_cents": 0, "status": "open_requested", "created_at": "..." }
 ```
+An admin then approves (→ `active`) or rejects (→ `closed`) — see the admin endpoints.
 
 ### `GET /accounts`
 → `200 { "accounts": [ { account… }, … ] }`
@@ -260,6 +266,16 @@ Paginated history, 25/page. Query params (all optional): `page` (int ≥1), `typ
 ```
 `direction` = `debit` (out) / `credit` (in); `counterparty` = other account number, external ref,
 or biller name.
+
+### `GET /accounts/preferences` · `PUT /accounts/preferences`  — notification settings
+```jsonc
+// GET → 200
+{ "notify_on_transfer": true, "notify_on_login": true }
+// PUT body (both optional; partial update) → 200 with the updated prefs
+{ "notify_on_transfer": false }             // non-boolean value → 400
+```
+`notify_on_transfer` gates transfer + bill-payment receipt emails; `notify_on_login` gates the
+"new sign-in" email. Both default to `true`.
 
 ### `POST /accounts/{account_id}/close`  — **request** closure (zero balance + fresh TOTP)
 This does **not** close the account immediately — it submits a request an admin must approve.
@@ -329,6 +345,8 @@ a different body.
 | `POST /admin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "status": "suspended" }` (reason required) |
 | `POST /admin/users/{id}/unlock` | — | `{ "status": "active" }` |
 | `GET /admin/users/{id}/nric` | — | `{ "user_id": "…", "nric": "S1234567D", "nric_masked": "S****567D" }` (audited) |
+| `POST /admin/accounts/{id}/opening/approve` | — | `{ "account_id": "…", "status": "active" }` (approve a new `open_requested` account; 404 if not pending) |
+| `POST /admin/accounts/{id}/opening/reject` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (reject the opening; reason required) |
 | `POST /admin/accounts/{id}/close` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "closed" }` (direct admin close; balance must be 0) |
 | `POST /admin/accounts/{id}/closure/approve` | — | `{ "account_id": "…", "status": "closed" }` (approve a customer `close_requested`; 404 if none pending; 400 if balance≠0) |
 | `POST /admin/accounts/{id}/closure/reject` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "active" }` (reject → reactivate; reason required) |

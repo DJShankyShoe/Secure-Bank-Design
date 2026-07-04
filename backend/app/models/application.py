@@ -108,10 +108,11 @@ class Account(Base):
 
     ``user_id`` ownership is verified server-side on every read (SR-13).
     ``account_number`` is server-generated and unguessable. Status flow:
-    ``active`` normally; ``suspended`` = a reversible admin freeze of this one
-    account (FR-08); ``close_requested`` = customer requested closure, frozen,
-    awaiting admin approve/reject (FR-05); ``closed`` = terminal (needs balance 0).
-    Any non-``active`` status freezes transfers (the money path requires ``active``).
+    ``open_requested`` = just created, frozen, awaiting admin approval (FR-02);
+    ``active`` once approved; ``suspended`` = a reversible admin freeze (FR-08);
+    ``close_requested`` = customer requested closure, frozen, awaiting admin
+    approve/reject (FR-05); ``closed`` = terminal (needs balance 0). Any
+    non-``active`` status freezes transfers (the money path requires ``active``).
     """
 
     __tablename__ = "accounts"
@@ -120,8 +121,9 @@ class Account(Base):
             "account_type IN ('savings','current')", name="accounts_type_check"
         ),
         CheckConstraint("balance_cents >= 0", name="accounts_balance_nonneg_check"),
-        CheckConstraint("status IN ('active','suspended','close_requested','closed')",
-                        name="accounts_status_check"),
+        CheckConstraint(
+            "status IN ('open_requested','active','suspended','close_requested','closed')",
+            name="accounts_status_check"),
         {"schema": "application"},
     )
 

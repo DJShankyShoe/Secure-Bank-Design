@@ -20,10 +20,14 @@ from sqlalchemy.exc import IntegrityError
 
 from ...config import Config
 from ...extensions import db
-from ...models import Account, Biller, Transaction, User
+from ...models import Account, Biller, ContactPreference, Transaction, User
 from ...security import lockout
 from ...security.mfa import verify_totp
-from ...security.validation import validate_account_type, validate_totp_code
+from ...security.validation import (
+    ValidationError,
+    validate_account_type,
+    validate_totp_code,
+)
 from ...services.audit import emit_audit
 
 
@@ -78,7 +82,12 @@ def serialize_account(account: Account) -> dict[str, Any]:
 
 
 def create_account(*, user_id: uuid.UUID, account_type: str, source_ip: str) -> dict[str, Any]:
-    """Create a savings/current account for ``user_id`` with balance 0 (FR-02)."""
+    """Request a new savings/current account for ``user_id`` (FR-02).
+
+    Opening now requires **admin approval**: the account is created with balance 0
+    and status ``open_requested`` (frozen — no transfers) until an admin approves
+    (→ ``active``) or rejects (→ ``closed``).
+    """
     account_type = validate_account_type(account_type)
 
     session = db.app_session()
@@ -89,6 +98,7 @@ def create_account(*, user_id: uuid.UUID, account_type: str, source_ip: str) -> 
                 user_id=user_id,
                 account_number=generate_account_number(),
                 account_type=account_type,
+                status="open_requested",  # awaiting admin approval (FR-02)
             )
             session.add(candidate)
             try:
@@ -141,6 +151,56 @@ def get_account(*, account_id: uuid.UUID) -> Optional[Account]:
         return session.get(Account, account_id)
     finally:
         session.close()
+
+
+def get_contact_preferences(*, user_id: uuid.UUID) -> dict[str, bool]:
+    """Return the user's notification preferences (FR-04). Defaults to all-on."""
+    session = db.app_session()
+    try:
+        pref = session.execute(
+            select(ContactPreference).where(ContactPreference.user_id == user_id)
+        ).scalar_one_or_none()
+        if pref is None:
+            return {"notify_on_transfer": True, "notify_on_login": True}
+        return {"notify_on_transfer": pref.notify_on_transfer,
+                "notify_on_login": pref.notify_on_login}
+    finally:
+        session.close()
+
+
+def update_contact_preferences(*, user_id: uuid.UUID,
+                               notify_on_transfer: Optional[bool] = None,
+                               notify_on_login: Optional[bool] = None) -> dict[str, bool]:
+    """Partially update the user's notification preferences (FR-04).
+
+    Only the fields provided (non-None) are changed; each must be a boolean.
+    """
+    for name, val in (("notify_on_transfer", notify_on_transfer),
+                      ("notify_on_login", notify_on_login)):
+        if val is not None and not isinstance(val, bool):
+            raise ValidationError(f"{name} must be true or false.")
+
+    session = db.app_session()
+    try:
+        pref = session.execute(
+            select(ContactPreference).where(ContactPreference.user_id == user_id)
+        ).scalar_one_or_none()
+        if pref is None:
+            pref = ContactPreference(user_id=user_id)
+            session.add(pref)
+        if notify_on_transfer is not None:
+            pref.notify_on_transfer = notify_on_transfer
+        if notify_on_login is not None:
+            pref.notify_on_login = notify_on_login
+        session.commit()
+        result = {"notify_on_transfer": pref.notify_on_transfer,
+                  "notify_on_login": pref.notify_on_login}
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+    return result
 
 
 def get_account_transactions(

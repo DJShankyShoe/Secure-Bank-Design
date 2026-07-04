@@ -11,7 +11,7 @@ from sqlalchemy import select, text
 
 from app.blueprints.auth.login_service import InvalidCredentials, login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from conftest import activate_signup_email
+from conftest import activate_signup_email, approve_account
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.12"
@@ -138,6 +138,7 @@ def test_admin_close_account_with_reason(require_db, admin_app, admin_client):
     target = _register(admin_app)
     cust = _client(admin_app, target)
     acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # FR-02: make it active first
     # Missing reason -> 400.
     assert admin_client.post(f"/admin/accounts/{acc['account_id']}/close", json={},
                             base_url=_HTTPS).status_code == 400
@@ -155,6 +156,7 @@ def test_admin_close_nonzero_balance_400(require_db, admin_app, admin_client):
     target = _register(admin_app)
     cust = _client(admin_app, target)
     acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # FR-02: make it active first
     s = db.app_session()
     try:
         a = s.get(Account, uuid.UUID(acc["account_id"]))
@@ -182,6 +184,7 @@ def _request_closure(app, creds) -> str:
     """Customer opens an account and requests its closure; returns the account_id."""
     cust = _client(app, creds)
     acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # FR-02: make it active first
     r = cust.post(f"/accounts/{acc['account_id']}/close",
                   json={"totp_code": pyotp.TOTP(creds["secret"]).now()}, base_url=_HTTPS)
     assert r.status_code == 200 and r.get_json()["status"] == "close_requested"
@@ -215,6 +218,7 @@ def test_admin_approve_without_pending_request_404(require_db, admin_app, admin_
     target = _register(admin_app)
     cust = _client(admin_app, target)
     acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # active, but no closure request pending
     assert admin_client.post(f"/admin/accounts/{acc['account_id']}/closure/approve",
                              base_url=_HTTPS).status_code == 404
 
@@ -258,6 +262,7 @@ def test_admin_suspend_and_unsuspend_account(require_db, admin_app, admin_client
     cust = _client(admin_app, target)
     aid = cust.post("/accounts", json={"account_type": "savings"},
                     base_url=_HTTPS).get_json()["account_id"]
+    approve_account(aid)  # FR-02: make it active first
     # reason required
     assert admin_client.post(f"/admin/accounts/{aid}/suspend", json={},
                              base_url=_HTTPS).status_code == 400
@@ -279,6 +284,7 @@ def test_admin_unsuspend_active_account_404(require_db, admin_app, admin_client)
     cust = _client(admin_app, target)
     aid = cust.post("/accounts", json={"account_type": "savings"},
                     base_url=_HTTPS).get_json()["account_id"]
+    approve_account(aid)  # active (not suspended)
     assert admin_client.post(f"/admin/accounts/{aid}/unsuspend",
                              base_url=_HTTPS).status_code == 404
 
@@ -294,6 +300,40 @@ def test_admin_lists_one_users_accounts(require_db, admin_app, admin_client):
     assert len(accts) == 2
     assert {a["account_type"] for a in accts} == {"savings", "current"}
     assert all({"account_number", "balance_cents", "status"} <= a.keys() for a in accts)
+
+
+def test_admin_approves_account_opening(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    assert acc["status"] == "open_requested"   # new accounts are frozen pending approval
+    r = admin_client.post(f"/admin/accounts/{acc['account_id']}/opening/approve",
+                          base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "active"
+    assert _audit_count(admin_app, event_type="ADMIN_OPEN_APPROVE",
+                        target_user_id=target["user_id"], outcome="success") == 1
+
+
+def test_admin_rejects_account_opening(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    acc = cust.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS).get_json()
+    assert admin_client.post(f"/admin/accounts/{acc['account_id']}/opening/reject", json={},
+                             base_url=_HTTPS).status_code == 400   # reason required
+    r = admin_client.post(f"/admin/accounts/{acc['account_id']}/opening/reject",
+                          json={"reason": "kyc failed"}, base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "closed"
+    assert _audit_count(admin_app, event_type="ADMIN_OPEN_REJECT",
+                        target_user_id=target["user_id"], outcome="success") == 1
+
+
+def test_admin_approve_opening_on_active_account_404(require_db, admin_app, admin_client):
+    target = _register(admin_app)
+    cust = _client(admin_app, target)
+    acc = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])   # already active -> no opening request pending
+    assert admin_client.post(f"/admin/accounts/{acc['account_id']}/opening/approve",
+                             base_url=_HTTPS).status_code == 404
 
 
 def test_admin_endpoints_require_auth_401(require_db, admin_app):

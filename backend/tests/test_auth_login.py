@@ -263,6 +263,25 @@ def test_change_password(require_db, api_client, app):
             login_password(email=u["email"], password=u["password"], source_ip=_IP)
 
 
+def test_login_notification_respects_preference(require_db, app):
+    from app.blueprints.accounts.service import update_contact_preferences
+
+    u = _register_and_activate(app)
+    with app.app_context():
+        outbox = app.extensions.setdefault("email_outbox", [])
+        # Default (notify_on_login on) -> a sign-in notification is sent.
+        outbox.clear()
+        t = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        login_mfa(mfa_token=t, code=pyotp.TOTP(u["secret"]).now(), source_ip=_IP)
+        assert any("sign-in" in m["body"] for m in outbox if m["to"] == u["email"])
+        # Turn it off -> no notification on the next login.
+        update_contact_preferences(user_id=u["user_id"], notify_on_login=False)
+        outbox.clear()
+        t2 = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        login_mfa(mfa_token=t2, code=pyotp.TOTP(u["secret"]).now(), source_ip=_IP)
+        assert not any("sign-in" in m["body"] for m in outbox if m["to"] == u["email"])
+
+
 def test_change_password_wrong_current_401(require_db, api_client, app):
     u = _register_and_activate(app)
     r1 = api_client.post("/auth/login",

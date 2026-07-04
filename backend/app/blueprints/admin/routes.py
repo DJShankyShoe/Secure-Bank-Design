@@ -14,11 +14,13 @@ from .service import (
     AdminError,
     admin_close_account,
     approve_account_closure,
+    approve_account_opening,
     list_all_accounts,
     list_user_accounts,
     list_users,
     read_audit_log,
     reject_account_closure,
+    reject_account_opening,
     reveal_nric,
     suspend_account,
     suspend_user,
@@ -148,6 +150,30 @@ def closure_reject(account_id: str):
     """Reject a pending customer closure request -> reactivate it (FR-05/08). Reason required."""
     try:
         result = reject_account_closure(admin_id=g.user_id, account_id=_uuid(account_id),
+                                        reason=_json().get("reason", ""), source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/opening/approve")
+@require_role("admin")
+def opening_approve(account_id: str):
+    """Approve a new account opening request -> activate it (FR-02/08)."""
+    try:
+        result = approve_account_opening(admin_id=g.user_id, account_id=_uuid(account_id),
+                                         source_ip=client_ip())
+    except AdminError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(result), 200
+
+
+@bp.post("/accounts/<account_id>/opening/reject")
+@require_role("admin")
+def opening_reject(account_id: str):
+    """Reject a new account opening request -> close it (FR-02/08). Reason required."""
+    try:
+        result = reject_account_opening(admin_id=g.user_id, account_id=_uuid(account_id),
                                         reason=_json().get("reason", ""), source_ip=client_ip())
     except AdminError as exc:
         return jsonify(error=exc.message), exc.status

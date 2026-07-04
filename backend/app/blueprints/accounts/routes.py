@@ -17,9 +17,11 @@ from .service import (
     create_account,
     get_account,
     get_account_transactions,
+    get_contact_preferences,
     list_accounts,
     request_account_closure,
     serialize_account,
+    update_contact_preferences,
 )
 
 
@@ -110,6 +112,33 @@ def create():
 def list_own():
     """List the current user's accounts (FR-03)."""
     return jsonify(accounts=list_accounts(user_id=g.user_id)), 200
+
+
+@bp.get("/preferences")
+@require_authenticated
+def get_preferences():
+    """Return the current user's notification preferences (FR-04)."""
+    return jsonify(get_contact_preferences(user_id=g.user_id)), 200
+
+
+@bp.put("/preferences")
+@require_authenticated
+def put_preferences():
+    """Update notification preferences (FR-04).
+
+    Body: ``notify_on_transfer`` and/or ``notify_on_login`` (booleans; partial
+    update — omitted fields are unchanged). Returns the updated preferences.
+    """
+    body = _json()
+    try:
+        prefs = update_contact_preferences(
+            user_id=g.user_id,
+            notify_on_transfer=body.get("notify_on_transfer"),
+            notify_on_login=body.get("notify_on_login"),
+        )
+    except ValidationError as exc:
+        return jsonify(error=exc.message), 400
+    return jsonify(prefs), 200
 
 
 @bp.get("/<account_id>")

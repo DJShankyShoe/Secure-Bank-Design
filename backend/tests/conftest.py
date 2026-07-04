@@ -48,6 +48,26 @@ def activate_signup_email(app, email, source_ip="127.0.0.1"):
     verify_signup_email(token=token, source_ip=source_ip)
 
 
+def approve_account(account_id):
+    """Activate a just-opened account (simulates admin approval, FR-02 test helper).
+
+    Account creation now yields ``open_requested`` (frozen) until an admin approves;
+    setup helpers call this to get a usable ``active`` account.
+    """
+    import uuid as _uuid
+
+    from app.extensions import db
+    from app.models import Account
+
+    s = db.app_session()
+    try:
+        acct = s.get(Account, _uuid.UUID(account_id))
+        acct.status = "active"
+        s.commit()
+    finally:
+        s.close()
+
+
 @pytest.fixture(scope="session")
 def app():
     """A fully wired application built by the factory (engines built, not connected)."""

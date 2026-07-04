@@ -10,7 +10,7 @@ import pytest
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from conftest import activate_signup_email
+from conftest import activate_signup_email, approve_account
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.6"
@@ -47,8 +47,10 @@ def _setup_user(app):
 
 
 def _create_account(client, account_type="savings") -> dict:
-    return client.post("/accounts", json={"account_type": account_type},
-                       base_url=_HTTPS).get_json()
+    acc = client.post("/accounts", json={"account_type": account_type},
+                      base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # FR-02: new accounts need admin approval
+    return acc
 
 
 def _fund(app, account_id: str, cents: int) -> None:

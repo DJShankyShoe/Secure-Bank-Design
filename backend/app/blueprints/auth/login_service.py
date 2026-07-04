@@ -39,7 +39,7 @@ from ...security.validation import (
     validate_password,
 )
 from ...services.audit import emit_audit
-from ...services.email import action_link, render_email, send_email
+from ...services.email import action_link, notify_user, render_email, send_email
 from .service import AuthServiceError, RateLimited
 
 _MFA_TOKEN_SALT = "mfa-pending-v1"
@@ -285,10 +285,10 @@ def login_mfa(*, mfa_token: str, code: str, source_ip: str) -> str:
         lockout.reset_failed_auth(user)
         session_id = create_session(session, user.user_id, source_ip)
         session.commit()
+        uid = user.user_id
         emit_audit("LOGIN", "success", source_ip=source_ip,
                    actor_user_id=user.user_id, actor_role=user.role,
                    target_user_id=user.user_id, action_detail={"step": "mfa", "method": method})
-        return session_id
     except AuthServiceError:
         session.rollback()
         raise
@@ -297,6 +297,18 @@ def login_mfa(*, mfa_token: str, code: str, source_ip: str) -> str:
         raise
     finally:
         session.close()
+
+    # New-login notification (honours the notify_on_login preference). Best-effort:
+    # the session is already created, so a notify hiccup must never fail the login.
+    try:
+        when = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        notify_user(user_id=uid, pref_attr="notify_on_login",
+                    subject="New sign-in to your SecureBank account",
+                    body=render_email("login_notification.txt",
+                                      source_ip=source_ip, when=when))
+    except Exception:  # noqa: BLE001 - notification is non-critical
+        pass
+    return session_id
 
 
 def logout(*, session_id: str, source_ip: str) -> None:

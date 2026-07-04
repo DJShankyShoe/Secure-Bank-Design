@@ -46,7 +46,7 @@ CREATE TABLE application.accounts (
   account_type    varchar(16) NOT NULL CHECK (account_type IN ('savings','current')),
   balance_cents   bigint      NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
   status          varchar(16) NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active','suspended','close_requested','closed')),  -- suspended=admin freeze (FR-08); close_requested=customer request→admin approve (FR-05)
+                    CHECK (status IN ('open_requested','active','suspended','close_requested','closed')),  -- open_requested=new, awaiting admin approval (FR-02); suspended=admin freeze (FR-08); close_requested=customer request→admin approve (FR-05)
   created_at      timestamptz NOT NULL DEFAULT NOW(),
   updated_at      timestamptz NOT NULL DEFAULT NOW(),
   closed_at       timestamptz
