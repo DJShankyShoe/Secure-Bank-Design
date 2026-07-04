@@ -185,12 +185,12 @@ jobs:
             git reset --hard origin/integration-test
 
             echo "== Build frontend -> frontend/dist =="
-            # Primary build; if node_modules is left root-owned from a prior run and
-            # npm hits a permission error, fall back to a clean rebuild.
+            # Clean install each deploy: node_modules is gitignored and persists on the
+            # host root-owned from prior container builds, which can leave stale/broken
+            # .bin perms (the 'vite: Permission denied' race). A fresh node_modules is
+            # cheap and avoids it.
             docker run --rm -v "$(pwd)/frontend":/app -w /app node:20-alpine \
-              sh -c "npm install && npm run build" \
-            || docker run --rm -v "$(pwd)/frontend":/app -w /app node:20-alpine \
-              sh -c "rm -rf node_modules package-lock.json && npm install && npm run build"
+              sh -c "rm -rf node_modules && npm install && npm run build"
 
             echo "== Rebuild + restart backend (2 containers -> :8000, :8001) =="
             ./backend/scripts/run.sh up 2
@@ -199,6 +199,16 @@ jobs:
             docker compose up -d
             docker compose exec -T nginx nginx -s reload || docker compose restart nginx
 
-            echo "== Health check (both backend containers) =="
-            curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/healthz && echo " backend-1 OK"
-            curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8001/healthz && echo " backend-2 OK"
+            echo "== Health check (wait for gunicorn to boot, then verify both) =="
+            # run.sh starts the containers detached; gunicorn needs a few seconds to
+            # bind, so poll each port up to 30s instead of curling immediately.
+            for port in 8000 8001; do
+              ok=""
+              for i in $(seq 1 30); do
+                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
+                fi
+                sleep 1
+              done
+              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
+            done
