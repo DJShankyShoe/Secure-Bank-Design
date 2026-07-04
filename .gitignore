@@ -27,3 +27,4 @@ reports/
 
 # Windows / WSL metadata
 *:Zone.Identifier
+node_modules/
