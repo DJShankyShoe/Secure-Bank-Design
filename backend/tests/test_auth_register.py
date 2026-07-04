@@ -259,6 +259,42 @@ def test_login_pending_email_returns_verification_required(require_db, api_clien
     assert body["email_verified"] is False and body["totp_confirmed"] is True
 
 
+def test_reissue_totp_provisioning(require_db, api_client):
+    email = _email()
+    r1 = api_client.post(
+        "/auth/register",
+        json={"full_name": "Re Totp", "nric": "S1234567D",
+              "email": email, "password": "Str0ng!Passw0rd"},
+        headers=_HTTPS,
+    )
+    original_uri = r1.get_json()["provisioning_uri"]
+    # Re-request the QR (never scanned) with email + password -> same seed's URI.
+    r = api_client.post("/auth/register/totp-setup",
+                        json={"email": email, "password": "Str0ng!Passw0rd"}, headers=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["provisioning_uri"] == original_uri
+    # Wrong password -> generic 401.
+    assert api_client.post("/auth/register/totp-setup",
+                           json={"email": email, "password": "WrongPass123!"},
+                           headers=_HTTPS).status_code == 401
+
+
+def test_reissue_totp_denied_after_setup(require_db, api_client):
+    email = _email()
+    r1 = api_client.post(
+        "/auth/register",
+        json={"full_name": "Done Totp", "nric": "S1234567D",
+              "email": email, "password": "Str0ng!Passw0rd"},
+        headers=_HTTPS,
+    )
+    secret = _secret_from_uri(r1.get_json()["provisioning_uri"])
+    api_client.post("/auth/register/verify-totp",
+                    json={"email": email, "code": pyotp.TOTP(secret).now()}, headers=_HTTPS)
+    # TOTP now confirmed -> the seed is never re-exposed (generic 401).
+    assert api_client.post("/auth/register/totp-setup",
+                           json={"email": email, "password": "Str0ng!Passw0rd"},
+                           headers=_HTTPS).status_code == 401
+
+
 def test_resend_signup_email_sends_a_new_link(require_db, api_client):
     email = _email()
     api_client.post(

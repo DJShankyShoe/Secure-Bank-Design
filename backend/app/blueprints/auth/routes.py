@@ -22,6 +22,7 @@ from .login_service import (
     login_mfa,
     login_password,
     logout,
+    reissue_totp_provisioning,
     request_account_unlock,
     request_password_reset,
     resend_signup_verification,
@@ -134,6 +135,24 @@ def resend_signup_email_route():
     """
     resend_signup_verification(email=_json().get("email", ""), source_ip=client_ip())
     return jsonify(status="verification_email_sent"), 200
+
+
+@bp.post("/register/totp-setup")
+def reissue_totp_route():
+    """Re-issue the TOTP provisioning URI for a user who didn't finish setup (FR-01).
+
+    Body: ``email``, ``password`` (the account isn't logged-in yet). Returns
+    ``{provisioning_uri}`` only while the account is ``pending`` with TOTP not yet
+    confirmed; otherwise a generic 401. Wrong passwords count toward lockout.
+    """
+    body = _json()
+    try:
+        uri = reissue_totp_provisioning(email=body.get("email", ""),
+                                        password=body.get("password", ""),
+                                        source_ip=client_ip())
+    except AuthServiceError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(provisioning_uri=uri), 200
 
 
 @bp.post("/login")

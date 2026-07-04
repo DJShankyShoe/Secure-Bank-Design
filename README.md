@@ -53,6 +53,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /auth/register/verify-totp` | Public | Confirm TOTP (→ `active` **iff email also verified**) |
 | `POST /auth/register/verify-email` | Token | Confirm the signup email (→ `active` iff TOTP also confirmed) |
 | `POST /auth/register/resend-email` | Public | Re-send the signup verification link |
+| `POST /auth/register/totp-setup` | Public | Re-issue the TOTP QR (never finished setup) |
 | `POST /auth/login` | Public | Stage 1: password → `mfa_token` |
 | `POST /auth/login/mfa` | Public | Stage 2: TOTP/backup code → session cookie |
 | `POST /auth/logout` | Auth | Revoke the session |
@@ -135,6 +136,16 @@ verify the emailed link (in either order).
 { "email": "a@b.com", "code": "123456" }
 // → 200 { "status": "active" }   // or "pending" if the email isn't verified yet
 ```
+
+### `POST /auth/register/totp-setup`  — re-issue the authenticator QR
+For a user who registered but closed the QR screen before scanning. Not logged in yet, so it takes
+credentials:
+```jsonc
+{ "email": "a@b.com", "password": "..." }
+// → 200 { "provisioning_uri": "otpauth://totp/..." }   // same seed as registration
+```
+Returns the URI **only** while the account is `pending` with TOTP not yet confirmed; otherwise a
+generic `401` (the seed is never re-exposed once set up). Wrong passwords count toward lockout.
 
 ### `POST /auth/register/verify-email`  — confirm the signup email (from the emailed link)
 ```jsonc

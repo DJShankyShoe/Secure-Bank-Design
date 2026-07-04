@@ -720,3 +720,61 @@ def verify_signup_email(*, token: str, source_ip: str) -> str:
     finally:
         session.close()
     return status
+
+
+def reissue_totp_provisioning(*, email: str, password: str, source_ip: str) -> str:
+    """Re-issue the TOTP provisioning URI for a user who never finished setup (FR-01).
+
+    For a registrant who closed the QR screen before scanning it. Requires the
+    correct password (failures count toward the SR-09 lockout) and only works while
+    the account is still ``pending`` with TOTP **not yet confirmed** — once TOTP is
+    confirmed the seed is never re-exposed. Returns the SAME seed's provisioning URI
+    (no seed rotation). Generic errors (anti-enumeration).
+    """
+    try:
+        email = validate_email(email)
+    except ValidationError:
+        crypto.verify_password(_DUMMY_HASH, password or "")  # constant-ish timing
+        raise InvalidCredentials() from None
+
+    session = db.app_session()
+    try:
+        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if user is None:
+            crypto.verify_password(_DUMMY_HASH, password or "")
+            raise InvalidCredentials()
+
+        lockout.clear_expired_lock(user)
+        if lockout.is_account_locked(user):
+            session.commit()
+            raise InvalidCredentials()
+        if not crypto.verify_password(user.password_hash, password or ""):
+            lockout.register_failed_auth(user)
+            session.commit()
+            emit_audit("TOTP_REPROVISION", "failure", source_ip=source_ip,
+                       actor_user_id=user.user_id, target_user_id=user.user_id,
+                       action_detail={"reason": "bad_password"})
+            raise InvalidCredentials()
+
+        # Only for a pending account whose TOTP isn't confirmed yet — never re-expose
+        # the seed of a set-up account.
+        if user.account_status != "pending" or user.totp_confirmed:
+            session.commit()
+            raise InvalidCredentials()
+
+        seed = crypto.aes_decrypt(user.totp_seed_encrypted, _aes_key()).decode("utf-8")
+        issuer = current_app.extensions["securebank_config"].totp_issuer
+        uri = pyotp.TOTP(seed).provisioning_uri(name=user.email, issuer_name=issuer)
+        lockout.reset_failed_auth(user)
+        session.commit()
+        emit_audit("TOTP_REPROVISION", "success", source_ip=source_ip,
+                   actor_user_id=user.user_id, target_user_id=user.user_id)
+        return uri
+    except AuthServiceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
