@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 
 from app.blueprints.auth.login_service import InvalidCredentials, login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.12"
@@ -37,6 +38,7 @@ def _register(app, role="customer") -> dict:
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: verify signup email
         if role == "admin":
             from app.extensions import db
             from app.models import User

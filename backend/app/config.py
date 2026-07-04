@@ -119,6 +119,7 @@ class Config:
     SESSION_ABSOLUTE_LIFETIME: ClassVar[timedelta] = timedelta(hours=8)  # SR-13
     MFA_PENDING_TOKEN_TTL: ClassVar[timedelta] = timedelta(minutes=5)    # stage-1 token
     EMAIL_VERIFY_TOKEN_TTL: ClassVar[timedelta] = timedelta(minutes=30)  # email re-verify (FR-04)
+    SIGNUP_EMAIL_TOKEN_TTL: ClassVar[timedelta] = timedelta(hours=24)  # signup verify (FR-01)
 
     IDEMPOTENCY_TTL: ClassVar[timedelta] = timedelta(hours=24)  # SR-08
 

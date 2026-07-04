@@ -49,16 +49,20 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 |---|---|---|
 | `GET /healthz` | Public | Liveness probe |
 | `GET /auth/csrf` | Public | Get a CSRF token (call before any POST) |
-| `POST /auth/register` | Public | Create a customer (→ `pending`) |
-| `POST /auth/register/verify-totp` | Public | Confirm TOTP → activate account |
+| `POST /auth/register` | Public | Create a customer (→ `pending`); emails a verify link |
+| `POST /auth/register/verify-totp` | Public | Confirm TOTP (→ `active` **iff email also verified**) |
+| `POST /auth/register/verify-email` | Token | Confirm the signup email (→ `active` iff TOTP also confirmed) |
+| `POST /auth/register/resend-email` | Public | Re-send the signup verification link |
 | `POST /auth/login` | Public | Stage 1: password → `mfa_token` |
 | `POST /auth/login/mfa` | Public | Stage 2: TOTP/backup code → session cookie |
 | `POST /auth/logout` | Auth | Revoke the session |
+| `POST /auth/password/change` | Auth | Change password (current + new) |
 | `POST /auth/email` | Auth | Request an email change (link to new address) |
 | `POST /auth/email/verify` | Token | Confirm the new email |
 | `POST /auth/unlock/request` | Public | Email an unlock link (locked account) |
 | `POST /auth/unlock/verify` | Token | Consume an unlock link |
 | `POST /auth/password/reset/request` | Public | Email a reset link (needs email **+ NRIC**) |
+| `GET /auth/password/reset/check` | Public | Is a reset token still valid? (call on page load) |
 | `POST /auth/password/reset/verify` | Token | Set a new password (token + TOTP) |
 | `POST /accounts` | Auth | Open a savings/current account |
 | `GET /accounts` | Auth | List own accounts |
@@ -111,7 +115,7 @@ Bootstrap a CSRF token for the SPA (call once before doing POSTs).
 ```
 
 ### `POST /auth/register`
-Create a customer (status `pending` until TOTP confirmed).
+Create a customer (status `pending`). Also **emails a verification link** to the address.
 ```jsonc
 // body
 { "full_name": "Tan Ah Kow", "nric": "S1234567D", "email": "a@b.com", "password": "Str0ng!Passw0rd" }
@@ -119,17 +123,41 @@ Create a customer (status `pending` until TOTP confirmed).
 { "user_id": "uuid", "provisioning_uri": "otpauth://totp/...", "backup_codes": ["AB12CD34EF", "..."] }
 ```
 Password policy: ≥12 chars, upper + lower + digit + symbol. Render the QR from `provisioning_uri`;
-show `backup_codes` once.
+show `backup_codes` once. **The account is usable only after BOTH steps below** — confirm TOTP *and*
+verify the emailed link (in either order).
 
-### `POST /auth/register/verify-totp`
+### `POST /auth/register/verify-totp`  — confirm the authenticator
 ```jsonc
-{ "email": "a@b.com", "code": "123456" }   // → 200 { "status": "active" }
+{ "email": "a@b.com", "code": "123456" }
+// → 200 { "status": "active" }   // or "pending" if the email isn't verified yet
 ```
+
+### `POST /auth/register/verify-email`  — confirm the signup email (from the emailed link)
+```jsonc
+{ "token": "..." }
+// → 200 { "status": "active" }   // or "pending" if TOTP isn't confirmed yet
+```
+The link is `<FRONTEND_BASE_URL>/verify-signup?token=…` (24-h expiry). The SPA reads `token` from the
+query string and POSTs it here.
 
 ### `POST /auth/login`  (stage 1)
 ```jsonc
 { "email": "a@b.com", "password": "..." }  // → 200 { "mfa_token": "..." }
 ```
+`401 { "error": "Invalid credentials." }` for a bad email/password (generic, no enumeration).
+**If the password is correct but the account isn't verified yet** (still `pending`), you get instead:
+```jsonc
+// 403
+{ "status": "verification_required", "email_verified": false, "totp_confirmed": true }
+```
+Use the flags to prompt the missing step(s) — verify email (offer **`POST /auth/register/resend-email`**)
+and/or confirm TOTP — then retry login.
+
+### `POST /auth/register/resend-email`  — re-send the signup verification link
+```jsonc
+{ "email": "a@b.com" }                      // → 200 { "status": "verification_email_sent" }
+```
+Generic (no enumeration), rate-limited. Sends only if the account is pending with an unverified email.
 
 ### `POST /auth/login/mfa`  (stage 2 — TOTP or a backup code; sets the session cookie)
 ```jsonc
@@ -138,6 +166,14 @@ show `backup_codes` once.
 
 ### `POST /auth/logout`
 → `200 { "status": "logged_out" }` (revokes session, clears cookie).
+
+### `POST /auth/password/change`  *(auth required)* — change password while logged in
+```jsonc
+{ "current_password": "...", "new_password": "N3w!Str0ngPassw0rd" }
+// → 200 { "status": "password_changed" }
+```
+Re-verifies the current password (`401` if wrong); new password must meet the FR-01 policy and differ
+from the old (`400`). On success **all your *other* sessions are revoked** (this one stays signed in).
 
 ### `POST /auth/email`  *(auth required)* — request email change (30-min link to the new address)
 ```jsonc
@@ -168,6 +204,14 @@ Requires **both** email **and** NRIC — a link is sent only if they match an ex
 { "email": "a@b.com", "nric": "S1234567D" }  // → 200 { "status": "reset_requested" }
 ```
 Always generic `200` (never reveals whether the email/NRIC matched). Rate-limited 10/hour per account.
+
+### `GET /auth/password/reset/check?token=…`  — is the reset link still valid?
+Call this when the `/reset-password` page loads, to show the form or an "expired link" message
+before the user fills anything in. **Read-only** — it does not consume the token.
+```jsonc
+// → 200 { "valid": true }   // or false (bad/expired/already-used token)
+```
+Returns only a boolean (no account info); no CSRF/session needed.
 
 ### `POST /auth/password/reset/verify`  — set a new password from the emailed link
 Identity (email + NRIC) was already proven at the **request** step, so here you supply the link's

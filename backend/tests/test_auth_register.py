@@ -113,19 +113,26 @@ def test_register_weak_password_rejected(require_db, app):
 # Service: confirm TOTP
 # --------------------------------------------------------------------------- #
 
-def test_confirm_totp_activates_account(require_db, app):
+def test_confirm_totp_then_email_activates_account(require_db, app):
+    from conftest import activate_signup_email
+
     from app.extensions import db
     from app.models import User
 
     kwargs, result = _register(app)
     code = pyotp.TOTP(_secret_from_uri(result.provisioning_uri)).now()
     with app.app_context():
-        confirm_totp_enrolment(email=kwargs["email"], code=code, source_ip="203.0.113.5")
+        # TOTP alone leaves the account 'pending' — the signup email must also be
+        # verified (FR-01).
+        assert confirm_totp_enrolment(
+            email=kwargs["email"], code=code, source_ip="203.0.113.5") == "pending"
+        activate_signup_email(app, kwargs["email"])
 
     s = db.app_session()
     try:
         user = s.execute(select(User).where(User.email == kwargs["email"])).scalar_one()
         assert user.account_status == "active"
+        assert user.email_verified and user.totp_confirmed
     finally:
         s.close()
 
@@ -204,7 +211,7 @@ def test_register_endpoint_validation_400(require_db, api_client):
     assert "error" in r.get_json()
 
 
-def test_verify_endpoint_200(require_db, api_client):
+def test_verify_endpoint_totp_then_email(require_db, api_client):
     email = _email()
     r1 = api_client.post(
         "/auth/register",
@@ -213,10 +220,56 @@ def test_verify_endpoint_200(require_db, api_client):
         headers=_HTTPS,
     )
     secret = _secret_from_uri(r1.get_json()["provisioning_uri"])
+    # TOTP confirmed but email not yet verified -> account stays 'pending'.
     r2 = api_client.post(
         "/auth/register/verify-totp",
         json={"email": email, "code": pyotp.TOTP(secret).now()},
         headers=_HTTPS,
     )
-    assert r2.status_code == 200
-    assert r2.get_json()["status"] == "active"
+    assert r2.status_code == 200 and r2.get_json()["status"] == "pending"
+
+    # Verify the signup email (token from the captured outbox) -> now 'active'.
+    outbox = api_client.application.extensions.get("email_outbox", [])
+    body = next(m["body"] for m in reversed(outbox)
+                if m["to"] == email and "verify-signup" in m["body"])
+    token = body.split("token=")[1].split()[0]
+    r3 = api_client.post("/auth/register/verify-email",
+                         json={"token": token}, headers=_HTTPS)
+    assert r3.status_code == 200 and r3.get_json()["status"] == "active"
+
+
+def test_login_pending_email_returns_verification_required(require_db, api_client):
+    email = _email()
+    r1 = api_client.post(
+        "/auth/register",
+        json={"full_name": "Pend V", "nric": "S1234567D",
+              "email": email, "password": "Str0ng!Passw0rd"},
+        headers=_HTTPS,
+    )
+    secret = _secret_from_uri(r1.get_json()["provisioning_uri"])
+    # Confirm TOTP but DON'T verify the email -> pending.
+    api_client.post("/auth/register/verify-totp",
+                    json={"email": email, "code": pyotp.TOTP(secret).now()}, headers=_HTTPS)
+    # Correct password -> verification_required with the two flags (not a generic 401).
+    r = api_client.post("/auth/login",
+                        json={"email": email, "password": "Str0ng!Passw0rd"}, headers=_HTTPS)
+    assert r.status_code == 403
+    body = r.get_json()
+    assert body["status"] == "verification_required"
+    assert body["email_verified"] is False and body["totp_confirmed"] is True
+
+
+def test_resend_signup_email_sends_a_new_link(require_db, api_client):
+    email = _email()
+    api_client.post(
+        "/auth/register",
+        json={"full_name": "Re Send", "nric": "S1234567D",
+              "email": email, "password": "Str0ng!Passw0rd"},
+        headers=_HTTPS,
+    )
+    outbox = api_client.application.extensions.get("email_outbox", [])
+    before = sum(1 for m in outbox if m["to"] == email and "verify-signup" in m["body"])
+    r = api_client.post("/auth/register/resend-email", json={"email": email}, headers=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "verification_email_sent"
+    after = sum(1 for m in outbox if m["to"] == email and "verify-signup" in m["body"])
+    assert after == before + 1

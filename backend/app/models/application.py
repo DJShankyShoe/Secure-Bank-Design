@@ -55,6 +55,9 @@ class User(Base):
     email_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    totp_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     nric_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     nric_masked: Mapped[str] = mapped_column(String(9), nullable=False)

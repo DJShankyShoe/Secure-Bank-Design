@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email
 from app.security.decorators import ensure_owner, require_authenticated, require_role
 
 _HTTPS = "https://localhost"
@@ -59,6 +60,7 @@ def _make_user(app, role="customer") -> dict:
                                 password=password, source_ip="203.0.113.2")
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip="203.0.113.2")
+        activate_signup_email(app, email)  # FR-01: verify signup email
         if role != "customer":
             from app.extensions import db
             from app.models import User

@@ -80,18 +80,23 @@ def revoke_session(db_session: Session, session_id: str) -> None:
         record.revoked = True
 
 
-def revoke_user_sessions(db_session: Session, user_id: uuid.UUID) -> None:
-    """Revoke every live session for a user (caller commits).
+def revoke_user_sessions(db_session: Session, user_id: uuid.UUID,
+                         except_session_id: Optional[str] = None) -> None:
+    """Revoke a user's live sessions (caller commits).
 
-    Used when a credential change must invalidate existing sessions everywhere —
-    e.g. a password reset (FR-09) — so a stolen session can't outlive the reset
-    (SR-13).
+    Used when a credential change must invalidate existing sessions — e.g. a
+    password reset/change (FR-09) — so a stolen session can't outlive it (SR-13).
+    Pass ``except_session_id`` to keep the caller's own session alive (used by an
+    authenticated password change, which shouldn't log the user out of the device
+    they're on).
     """
     for record in db_session.execute(
         select(SessionRecord).where(
             SessionRecord.user_id == user_id, SessionRecord.revoked.is_(False)
         )
     ).scalars():
+        if except_session_id is not None and record.session_id == except_session_id:
+            continue
         record.revoked = True
 
 

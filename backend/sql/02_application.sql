@@ -8,7 +8,8 @@
 CREATE TABLE application.users (
   user_id               uuid PRIMARY KEY,
   email                 varchar(254) UNIQUE NOT NULL,            -- RFC 5322; lowercased on write
-  email_verified        boolean      NOT NULL DEFAULT FALSE,
+  email_verified        boolean      NOT NULL DEFAULT FALSE,      -- signup email confirmed (FR-01)
+  totp_confirmed        boolean      NOT NULL DEFAULT FALSE,      -- TOTP enrolment confirmed; account active only when BOTH true (FR-01)
   full_name             varchar(120) NOT NULL,
   nric_encrypted        bytea        NOT NULL,                   -- AES-256-GCM (SR-03)
   nric_masked           varchar(9)   NOT NULL,                   -- e.g. T****518H

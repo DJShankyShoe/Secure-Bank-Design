@@ -21,6 +21,7 @@ from app.blueprints.auth.login_service import (
     login_password,
 )
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.21"
@@ -49,6 +50,7 @@ def _register_active(app) -> dict:
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: verify signup email
     return {"email": email, "secret": secret, "user_id": res.user_id,
             "backup_codes": res.backup_codes}
 
@@ -192,6 +194,22 @@ def test_request_unknown_email_is_generic_and_silent(require_db, reset_app):
 def test_verify_bad_token_400(require_db, reset_app):
     c = reset_app.test_client()
     assert _verify(c, "garbage", _NEW_PW, "123456").status_code == 400
+
+
+def test_reset_check_token(require_db, reset_app):
+    u = _register_active(reset_app)
+    c = reset_app.test_client()
+    token = _request_token(reset_app, c, u["email"])
+
+    def _valid(tok):
+        return c.get(f"/auth/password/reset/check?token={tok}",
+                     base_url=_HTTPS).get_json()["valid"]
+
+    assert _valid(token) is True          # fresh token is valid
+    assert _valid("garbage") is False     # junk token is not
+    # after the reset consumes it, the same token is no longer valid (single-use)
+    assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
+    assert _valid(token) is False
 
 
 def test_request_is_rate_limited(require_db, reset_app):

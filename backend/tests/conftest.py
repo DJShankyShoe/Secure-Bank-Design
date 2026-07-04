@@ -31,6 +31,23 @@ for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
 
 
+def activate_signup_email(app, email, source_ip="127.0.0.1"):
+    """Verify a freshly-registered user's signup email (FR-01 test helper).
+
+    FR-01 makes an account usable only after BOTH TOTP confirmation and signup-email
+    verification. Setup helpers call this (inside an app_context) after
+    ``register_customer`` + ``confirm_totp_enrolment`` to fully activate the account.
+    Pulls the token from the captured TESTING email outbox.
+    """
+    from app.blueprints.auth.login_service import verify_signup_email
+
+    outbox = app.extensions.get("email_outbox", [])
+    msg = next(m for m in reversed(outbox)
+               if m["to"] == email and "verify-signup" in m["body"])
+    token = msg["body"].split("token=")[1].split()[0]
+    verify_signup_email(token=token, source_ip=source_ip)
+
+
 @pytest.fixture(scope="session")
 def app():
     """A fully wired application built by the factory (engines built, not connected)."""

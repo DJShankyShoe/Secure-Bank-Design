@@ -16,13 +16,18 @@ from . import bp
 from .email_service import EmailChangeError, request_email_change, verify_email_change
 from .login_service import (
     UnlockLinkInvalid,
+    VerificationRequired,
+    change_password,
+    check_reset_token,
     login_mfa,
     login_password,
     logout,
     request_account_unlock,
     request_password_reset,
+    resend_signup_verification,
     verify_account_unlock,
     verify_password_reset,
+    verify_signup_email,
 )
 from .service import (
     AuthServiceError,
@@ -86,13 +91,15 @@ def register():
 
 @bp.post("/register/verify-totp")
 def verify_totp_enrolment():
-    """Confirm a TOTP code for a pending account, activating it (FR-01, SR-11).
+    """Confirm a TOTP code during enrolment (FR-01, SR-11).
 
-    Body: ``email``, ``code``. Returns 200 on success. Generic errors only.
+    Body: ``email``, ``code``. The account becomes ``active`` only once the signup
+    **email is also verified**; until then it stays ``pending``. Returns the
+    resulting ``status`` (``active`` or ``pending``). Generic errors only.
     """
     body = _json()
     try:
-        confirm_totp_enrolment(
+        status = confirm_totp_enrolment(
             email=body.get("email", ""),
             code=body.get("code", ""),
             source_ip=client_ip(),
@@ -102,7 +109,31 @@ def verify_totp_enrolment():
     except AuthServiceError as exc:
         return jsonify(error=exc.message), exc.status
 
-    return jsonify(status="active"), 200
+    return jsonify(status=status), 200
+
+
+@bp.post("/register/verify-email")
+def verify_signup_email_route():
+    """Confirm the signup email from the emailed link (FR-01).
+
+    Body: ``token``. The account becomes ``active`` only once TOTP is **also**
+    confirmed; otherwise it stays ``pending``. Returns the resulting ``status``.
+    """
+    try:
+        status = verify_signup_email(token=_json().get("token", ""), source_ip=client_ip())
+    except AuthServiceError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(status=status), 200
+
+
+@bp.post("/register/resend-email")
+def resend_signup_email_route():
+    """Re-send the signup verification link for a pending account (FR-01).
+
+    Body: ``email``. Always a generic 200 (anti-enumeration); rate-limited.
+    """
+    resend_signup_verification(email=_json().get("email", ""), source_ip=client_ip())
+    return jsonify(status="verification_email_sent"), 200
 
 
 @bp.post("/login")
@@ -119,6 +150,12 @@ def login():
             password=body.get("password", ""),
             source_ip=client_ip(),
         )
+    except VerificationRequired as exc:
+        # Correct password but the account isn't verified yet — tell the SPA which
+        # step(s) remain so it can prompt (and offer /register/resend-email).
+        return jsonify(status="verification_required",
+                       email_verified=exc.email_verified,
+                       totp_confirmed=exc.totp_confirmed), exc.status
     except AuthServiceError as exc:
         return jsonify(error=exc.message), exc.status
 
@@ -227,6 +264,17 @@ def password_reset_request():
     return jsonify(status="reset_requested"), 200
 
 
+@bp.get("/password/reset/check")
+def password_reset_check():
+    """Read-only check whether a reset token is currently valid (FR-09).
+
+    Query param ``token``. Returns ``{"valid": bool}`` — does NOT consume the token
+    and reveals no account info. The SPA calls this when the reset page loads to
+    show the form or an "expired link" message. GET, so no CSRF/session needed.
+    """
+    return jsonify(valid=check_reset_token(request.args.get("token", ""))), 200
+
+
 @bp.post("/password/reset/verify")
 def password_reset_verify():
     """Consume a reset token, verify a second factor, and set a new password
@@ -250,3 +298,30 @@ def password_reset_verify():
     except AuthServiceError as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(status="password_reset"), 200
+
+
+@bp.post("/password/change")
+@require_authenticated
+def password_change():
+    """Change the logged-in user's password (FR-01, SR-01/13).
+
+    Body: ``current_password``, ``new_password``. Re-verifies the current password,
+    re-hashes the new one, and revokes the user's OTHER sessions (keeps this one).
+    401 if the current password is wrong; 400 if the new one is weak or unchanged.
+    """
+    from ...config import Config
+
+    body = _json()
+    try:
+        change_password(
+            user_id=g.user_id,
+            current_password=body.get("current_password", ""),
+            new_password=body.get("new_password", ""),
+            current_session_id=request.cookies.get(Config.SESSION_COOKIE_NAME, ""),
+            source_ip=client_ip(),
+        )
+    except ValidationError as exc:
+        return jsonify(error=exc.message), 400
+    except AuthServiceError as exc:
+        return jsonify(error=exc.message), exc.status
+    return jsonify(status="password_changed"), 200
