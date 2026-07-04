@@ -293,3 +293,24 @@ def test_change_password_wrong_current_401(require_db, api_client, app):
                         json={"current_password": "WrongPass123!", "new_password": "An0ther!Passw0rd"},
                         headers=_HTTPS)
     assert r.status_code == 401
+
+
+def test_me_returns_profile(require_db, api_client, app):
+    u = _register_and_activate(app)
+    r1 = api_client.post("/auth/login",
+                         json={"email": u["email"], "password": u["password"]}, headers=_HTTPS)
+    mfa = r1.get_json()["mfa_token"]
+    api_client.post("/auth/login/mfa",
+                    json={"mfa_token": mfa, "code": pyotp.TOTP(u["secret"]).now()}, headers=_HTTPS)
+    body = api_client.get("/auth/me", headers=_HTTPS).get_json()
+    assert body["email"] == u["email"]
+    assert body["role"] == "customer"
+    assert body["full_name"] == "Login User"
+    assert body["nric_masked"] == "S****567D"
+    # never leak secrets / plaintext NRIC
+    assert "nric" not in body and "password" not in body and "totp_seed" not in body
+
+
+def test_me_requires_auth_401(require_db, api_client):
+    fresh = api_client.application.test_client()   # no session cookie
+    assert fresh.get("/auth/me", headers=_HTTPS).status_code == 401

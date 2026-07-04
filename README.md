@@ -57,6 +57,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /auth/login` | Public | Stage 1: password → `mfa_token` |
 | `POST /auth/login/mfa` | Public | Stage 2: TOTP/backup code → session cookie |
 | `POST /auth/logout` | Auth | Revoke the session |
+| `GET /auth/me` | Auth | Current user's profile (name, role, status) |
 | `POST /auth/password/change` | Auth | Change password (current + new) |
 | `POST /auth/email` | Auth | Request an email change (link to new address) |
 | `POST /auth/email/verify` | Token | Confirm the new email |
@@ -181,6 +182,16 @@ Generic (no enumeration), rate-limited. Sends only if the account is pending wit
 
 ### `POST /auth/logout`
 → `200 { "status": "logged_out" }` (revokes session, clears cookie).
+
+### `GET /auth/me`  *(auth required)* — the current user's profile
+Call after login to know who's signed in and gate UI by role. Masked NRIC only; no secrets.
+```jsonc
+// → 200
+{ "user_id": "uuid", "email": "a@b.com", "full_name": "Tan Ah Kow", "role": "customer",
+  "nric_masked": "S****567D", "email_verified": true, "account_status": "active",
+  "created_at": "..." }
+// 401 if not logged in
+```
 
 ### `POST /auth/password/change`  *(auth required)* — change password while logged in
 ```jsonc

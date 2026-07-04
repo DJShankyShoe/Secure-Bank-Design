@@ -215,3 +215,28 @@ def confirm_totp_enrolment(*, email: str, code: str, source_ip: str) -> str:
     finally:
         session.close()
     return status
+
+
+def get_user_profile(*, user_id: uuid.UUID) -> dict:
+    """Return the logged-in user's profile for the SPA (FR-08).
+
+    Safe to hand to the client: masked NRIC only, never a plaintext secret. Returns
+    an empty dict if the user no longer exists (the route maps that to 401).
+    """
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        if user is None:
+            return {}
+        return {
+            "user_id": str(user.user_id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "nric_masked": user.nric_masked,
+            "email_verified": user.email_verified,
+            "account_status": user.account_status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        }
+    finally:
+        session.close()
