@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { api } from "./api/api";
 
 // Layouts
 import Layout from './components/Layout.jsx';
@@ -15,6 +16,7 @@ import ForgotPassword from './pages/Auth/ForgotPassword.jsx';
 import ResetPassword from './pages/Auth/ResetPassword.jsx';
 import SetupPin from './pages/Auth/SetupPin.jsx';
 import VerifyEmail from './pages/Auth/VerifyEmail.jsx';
+import RegisterTotpSetup from "./pages/Auth/RegisterTotpSetup";
 
 // Customer Pages
 import Dashboard from './pages/Dashboard/Overview.jsx';
@@ -54,8 +56,16 @@ export default function App() {
     totpConfirmed: true  // Default to true so admins don't get trapped
   });
 
-  const handleLogout = () => {
-    setAuth({ isAuthenticated: false, role: null, emailVerified: true, totpConfirmed: true });
+  // Uses the API call
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (err) {
+      console.error("Logout failed:", err);
+    } finally {
+      sessionStorage.removeItem("securebank_user");
+      setAuth({ isAuthenticated: false, role: null, emailVerified: true, totpConfirmed: true });
+    }
   };
 
   // The login handler now accepts the exact payload from the backend / Login.jsx
@@ -86,6 +96,7 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/register/totp" element={<RegisterTotpSetup />} />
         
         {/* Onboarding Routes update the App state when completed */}
         <Route 

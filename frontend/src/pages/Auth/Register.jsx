@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -12,22 +13,44 @@ export default function Register() {
   });
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match");
-      return;
-    }
+  e.preventDefault();
 
-    // TODO
-    // 1. Hook this up to the Flask /register route.
-    // 2. Enforce password complexity (>= 12 chars, mixed case, digit, symbol) SERVER-SIDE.
-    // 3. Hash password with Argon2id before storing.
-    // 4. Encrypt NRIC with AES-256 (SR-03).
-    console.log("Mock Registration Payload:", formData);
-    
-    // On success:
-    navigate('/login');
-  };
+  if (formData.password !== formData.confirmPassword) {
+    alert("Passwords do not match");
+    return;
+  }
+
+  try {
+    const response = await api.register(
+      formData.fullName,
+      formData.nric,
+      formData.email,
+      formData.password
+    );
+
+    console.log(response);
+
+    /*
+      Backend returns:
+      {
+          user_id,
+          provisioning_uri,
+          backup_codes
+      }
+    */
+
+    navigate("/register/totp", {
+      state: {
+        email: formData.email,
+        provisioningUri: response.provisioning_uri,
+        backupCodes: response.backup_codes,
+      },
+    });
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
   return (
     <div className="login-screen">

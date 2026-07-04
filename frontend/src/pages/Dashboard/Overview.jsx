@@ -1,13 +1,55 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
-const transfers = [
-  { title: "Home utility bill", counterpart: "SP Services", amount: "- SGD 124.90", date: "24 May 2026, 09:40", status: "Completed" },
-  { title: "Salary credit", counterpart: "Ficta Labs Pte Ltd", amount: "+ SGD 5,400.00", date: "23 May 2026, 08:05", status: "Completed" },
-];
+import { api } from '../../api/api';
 
 export default function Dashboard() {
   const navigate = useNavigate();
+
+  const [accounts, setAccounts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      try {
+        const accountsRes = await api.getAccounts();
+        const loadedAccounts = accountsRes.accounts || [];
+        setAccounts(loadedAccounts);
+
+        if (loadedAccounts.length > 0) {
+          const txnRes = await api.getTransactions(loadedAccounts[0].account_id);
+          setTransactions((txnRes.items || []).slice(0, 5));
+        }
+
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboard();
+  }, []);
+
+  const availableBalanceCents = accounts.reduce(
+    (sum, account) => sum + (account.balance_cents || 0),
+    0
+  );
+
+  const formatAmount = (amountCents, direction) => {
+    const amount = Math.abs(amountCents) / 100;
+    const sign = direction === "credit" ? "+" : "-";
+    return `${sign} SGD ${amount.toFixed(2)}`;
+  };
+
+  const formatDate = (timestamp) =>
+    new Date(timestamp).toLocaleString("en-SG", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   return (
     <>
@@ -25,13 +67,13 @@ export default function Dashboard() {
       <section className="metrics-grid">
         <div className="metric-card">
           <div className="table-muted">Available balance</div>
-          <div className="metric-value">SGD 23,300.75</div>
-          <div className="trend-up">+4.2% from last month</div>
+          <div className="metric-value">
+            {loading ? "Loading..." : `SGD ${(availableBalanceCents / 100).toFixed(2)}`}
+          </div>
         </div>
         <div className="metric-card">
-          <div className="table-muted">Protected transfers</div>
-          <div className="metric-value">7</div>
-          <div className="trend-warn">2 awaiting PIN review</div>
+          <div className="table-muted">Accounts</div>
+          <div className="metric-value">{loading ? "Loading..." : accounts.length}</div>
         </div>
       </section>
 
@@ -39,21 +81,27 @@ export default function Dashboard() {
         <div className="content-card split-card">
           <div>
             <h3 className="card-title">Recent transactions</h3>
-            <ul className="timeline">
-              {transfers.map((entry) => (
-                <li key={`${entry.title}-${entry.date}`}>
-                  <span className="timeline-marker"></span>
-                  <div style={{ flex: 1 }}>
-                    <div className="timeline-title-row">
-                      <strong>{entry.title}</strong>
-                      <span className="amount">{entry.amount}</span>
+            {loading ? (
+              <div className="table-muted">Loading transactions...</div>
+            ) : transactions.length > 0 ? (
+              <ul className="timeline">
+                {transactions.map((entry) => (
+                  <li key={entry.transaction_id}>
+                    <span className="timeline-marker"></span>
+                    <div style={{ flex: 1 }}>
+                      <div className="timeline-title-row">
+                        <strong>{entry.transaction_type}</strong>
+                        <span className="amount">{formatAmount(entry.amount_cents, entry.direction)}</span>
+                      </div>
+                      <div className="timeline-meta">{entry.counterparty} · {formatDate(entry.timestamp)}</div>
+                      <div className="timeline-description">Status: {entry.status}</div>
                     </div>
-                    <div className="timeline-meta">{entry.counterpart} · {entry.date}</div>
-                    <div className="timeline-description">Status: {entry.status}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="table-muted">No recent transactions.</div>
+            )}
           </div>
         </div>
       </section>

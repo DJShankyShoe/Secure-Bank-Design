@@ -1,0 +1,18 @@
+# Keep the image small and secrets out (build context = backend/).
+.venv/
+.env
+*.env
+!.env.example
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+sql/
+scripts/
+setup.cfg
+pytest.ini
+requirements-dev.txt
+Dockerfile
+.dockerignore
+docker-compose.yml

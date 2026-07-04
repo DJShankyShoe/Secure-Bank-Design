@@ -1,26 +1,72 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from "react";
+import { api } from "../../api/api";
 
 export default function ManageAccount() {
-  const [openData, setOpenData] = useState({ type: 'savings' });
-  const [closeData, setCloseData] = useState({ accountId: '', totpCode: '' });
+  const [newEmail, setNewEmail] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [accountToClose, setAccountToClose] = useState('');
+  const [accounts, setAccounts] = useState([]);
 
-  const handleOpenAccount = async (e) => {
-    e.preventDefault();
-    // TODO (Backend): POST /admin/accounts/requests
-    // Creates a new request with status 'pending' for admin approval.
-    console.log("Mock Open Account Request:", openData);
-    alert("Account opening request submitted for review.");
+  //remove hardcoded acc list.
+  useEffect(() => {
+  const loadAccounts = async () => {
+    try {
+      const response = await api.getAccounts();
+      setAccounts(response.accounts);
+    } catch (err) {
+      alert(err.message);
+    }
+    };
+
+    loadAccounts();
+  }, []);
+
+  const handleUpdateEmail = async (e) => {
+  e.preventDefault();
+
+    try {
+      const response = await api.requestEmailChange(newEmail);
+
+      alert(response.status);
+
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleCloseAccount = async (e) => {
-    e.preventDefault();
-    // TODO (Backend): POST /admin/accounts/{id}/closure
-    // 1. Verify account balance == 0.
-    // 2. Verify the TOTP code.
-    // 3. Mark account status as 'close_requested' for admin approval.
-    console.log(`Mock Close Account Request:`, closeData);
-    alert("Account closure request submitted for review.");
-  };
+  e.preventDefault();
+
+    try {
+      await api.closeAccount(
+        accountToClose,
+        totpCode
+      );
+
+      setAccounts((prevAccounts) =>
+        prevAccounts.filter((account) => account.account_id !== accountToClose)
+      );
+
+      setAccountToClose('');
+      setTotpCode('');
+
+      alert("Account closed.");
+
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  const activeAccounts = accounts.filter((account) => {
+    const status = String(account.status || "").toLowerCase();
+
+    return (
+      status !== "closed" &&
+      status !== "inactive" &&
+      !account.closed_at &&
+      account.is_closed !== true
+    );
+  });
 
   return (
     <section className="section">
@@ -65,8 +111,14 @@ export default function ManageAccount() {
               <label>Select Account to Close</label>
               <select required value={closeData.accountId} onChange={(e) => setCloseData({...closeData, accountId: e.target.value})}>
                 <option value="">-- Select Account --</option>
-                <option value="acc_1">Savings (****4831)</option>
-                <option value="acc_2">Current (****9264)</option>
+                {activeAccounts.map((account) => (
+                  <option
+                    key={account.account_id}
+                    value={account.account_id}
+                  >
+                    {account.account_type} ({account.account_number})
+                  </option>
+                ))}
               </select>
             </div>
             <div className="field">

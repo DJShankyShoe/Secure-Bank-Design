@@ -1,31 +1,77 @@
-import React, { useState } from 'react';
-
-// Expanded mock data with deeper transaction details
-const mockHistory = [
-  { id: 'TXN-0921', title: "Home utility bill", counterpart: "SP Services", amount: "-124.90", type: "Bill Payment", date: "24 May 2026, 09:40", status: "Completed", ref: "REF-882910" },
-  { id: 'TXN-0920', title: "Salary credit", counterpart: "Ficta Labs Pte Ltd", amount: "5400.00", type: "Transfer", date: "23 May 2026, 08:05", status: "Completed", ref: "REF-882901" },
-  { id: 'TXN-0919', title: "Transfer to joint savings", counterpart: "Own Account", amount: "-650.00", type: "Transfer", date: "22 May 2026, 21:17", status: "Protected", ref: "REF-882855" },
-  { id: 'TXN-0918', title: "Coffee & Co", counterpart: "Visa Debit", amount: "-6.50", type: "Card Spend", date: "21 May 2026, 14:30", status: "Completed", ref: "VISA-1029" },
-  { id: 'TXN-0917', title: "Refund", counterpart: "TechStore SG", amount: "129.00", type: "Refund", date: "19 May 2026, 10:15", status: "Processing", ref: "REF-882110" },
-];
+import React, { useEffect, useState } from "react";
+import { api } from "../../api/api";
 
 export default function History() {
-  const [filters, setFilters] = useState({ dateRange: '', type: '', minAmount: '' });
 
-  // Frontend logic to make the mock filters actually work for UI testing
-  const filteredTransactions = mockHistory.filter(txn => {
-    const matchType = filters.type ? txn.type === filters.type : true;
-    const matchAmount = filters.minAmount ? Math.abs(parseFloat(txn.amount)) >= parseFloat(filters.minAmount) : true;
-    return matchType && matchAmount;
+  const [filters, setFilters] = useState({
+    dateRange: "",
+    type: "",
+    minAmount: ""
   });
+
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const [transactions, setTransactions] = useState([]);
+
+  //load account
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const response = await api.getAccounts();
+
+        setAccounts(response.accounts);
+
+        if (response.accounts.length > 0) {
+          setSelectedAccount(response.accounts[0].account_id);
+        }
+
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+    loadAccounts();
+  }, []);
+
+//load transaction
+  useEffect(() => {
+    if (!selectedAccount) return;
+
+    const loadTransactions = async () => {
+      try {
+        const response = await api.getTransactions(selectedAccount);
+
+        setTransactions(response.items);
+
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+    loadTransactions();
+
+  }, [selectedAccount]);
+
+  const filteredTransactions = transactions;
 
   const handleFilterSubmit = (e) => {
     e.preventDefault();
-    // TODO (Backend): 
-    // 1. Hook this up to fetch paginated records from PostgreSQL via Flask.
-    // 2. Ensure parameterized queries are used to prevent SQL Injection.
-    console.log("Fetching history with filters:", filters);
+
+    // Backend filtering can be added later
+    console.log(filters);
   };
+
+  const activeAccounts = accounts.filter((account) => {
+  const status = String(account.status || "").toLowerCase();
+
+    return (
+      status !== "closed" &&
+      status !== "inactive" &&
+      !account.closed_at &&
+      account.is_closed !== true
+    );
+  });
+
 
   return (
     <section className="section">
@@ -39,7 +85,25 @@ export default function History() {
 
       {/* Filter Control Panel */}
       <div className="content-card" style={{ marginBottom: '24px', backgroundColor: '#f9fafb' }}>
-        <form onSubmit={handleFilterSubmit} className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr auto', alignItems: 'end' }}>
+        <form onSubmit={handleFilterSubmit} className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto', alignItems: 'end' }}>
+          <div className="field">
+            <label>Account</label>
+
+            <select
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+            >
+              {activeAccounts.map((account) => (
+                <option
+                  key={account.account_id}
+                  value={account.account_id}
+                >
+                  {account.account_number}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="field">
             <label>Date Range (Start)</label>
             <input 
@@ -47,6 +111,7 @@ export default function History() {
               onChange={(e) => setFilters({...filters, dateRange: e.target.value})} 
             />
           </div>
+
           <div className="field">
             <label>Transaction Type</label>
             <select onChange={(e) => setFilters({...filters, type: e.target.value})}>
@@ -84,21 +149,22 @@ export default function History() {
           
           {filteredTransactions.length > 0 ? (
             filteredTransactions.map((txn) => {
-              const isPositive = parseFloat(txn.amount) > 0;
+              const amount = txn.amount_cents / 100;
+              const isPositive = txn.direction === "credit";
               return (
-                <div className="table-row" key={txn.id} style={{ gridTemplateColumns: '2fr 1.5fr 1.5fr 1fr 1fr', alignItems: 'center' }}>
+                <div className="table-row" key={txn.transaction_id} style={{ gridTemplateColumns: '2fr 1.5fr 1.5fr 1fr 1fr', alignItems: 'center' }}>
                   
                   {/* Title and Reference */}
                   <div>
-                    <strong style={{ display: 'block', color: '#111827' }}>{txn.title}</strong>
-                    <span className="helper-text" style={{ fontSize: '0.8rem' }}>{txn.type} · Ref: {txn.ref}</span>
+                    <strong style={{ display: 'block', color: '#111827' }}>{txn.transaction_type}</strong>
+                    <span className="helper-text" style={{ fontSize: '0.8rem' }}>{txn.transaction_type} · Ref: {txn.reference_number}</span>
                   </div>
                   
                   {/* Date */}
-                  <div style={{ color: '#4b5563', fontSize: '0.9rem' }}>{txn.date}</div>
+                  <div style={{ color: '#4b5563', fontSize: '0.9rem' }}>{new Date(txn.timestamp).toLocaleString()}</div>
                   
                   {/* Counterpart */}
-                  <div style={{ color: '#4b5563', fontSize: '0.9rem' }}>{txn.counterpart}</div>
+                  <div style={{ color: '#4b5563', fontSize: '0.9rem' }}>{txn.counterparty}</div>
                   
                   {/* Amount with conditional color formatting */}
                   <div style={{ 
@@ -106,12 +172,12 @@ export default function History() {
                     fontWeight: '600', 
                     color: isPositive ? '#059669' : '#111827' 
                   }}>
-                    {isPositive ? '+' : ''}SGD {Math.abs(parseFloat(txn.amount)).toFixed(2)}
+                    {isPositive ? '+' : ''}SGD {amount.toFixed(2)}
                   </div>
                   
                   {/* Status Tag */}
                   <div style={{ textAlign: 'right' }}>
-                    <span className={`tag ${txn.status === 'Completed' ? 'chip-muted' : txn.status === 'Protected' ? 'warning' : ''}`} style={{ display: 'inline-block' }}>
+                    <span className={`tag ${txn.status === 'Complete' ? 'chip-muted' : txn.status === 'Pending' ? 'warning' : ''}`} style={{ display: 'inline-block' }}>
                       {txn.status}
                     </span>
                   </div>

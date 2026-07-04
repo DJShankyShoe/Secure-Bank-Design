@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function ResetPassword() {
   const navigate = useNavigate();
@@ -13,30 +14,37 @@ export default function ResetPassword() {
   });
   const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Frontend validation for UX
+    if (!token) {
+      setError('Missing or invalid reset token.');
+      return;
+    }
+
     if (formData.newPassword !== formData.confirmPassword) {
       setError('Passwords do not match. Please try again.');
       return;
     }
+
     if (formData.newPassword.length < 12) {
       setError('Password must be at least 12 characters long.');
       return;
     }
 
-    // TODO (Backend):
-    // 1. Verify the URL token is valid and hasn't expired.
-    // 2. Validate password complexity server-side (mixed case, digit, symbol).
-    // 3. Verify the TOTP or backup code provided in `formData.authCode`.
-    // 4. Hash the new password with Argon2id and update the database.
-    // 5. Invalidate all active sessions for this user.
-    console.log("Reset Payload:", { token, ...formData });
-    
-    alert("Password reset successfully. Please log in with your new credentials.");
-    navigate('/login');
+    try {
+      await api.resetPassword(
+        token,
+        formData.newPassword,
+        formData.authCode
+      );
+
+      alert("Password reset successfully. Please log in with your new credentials.");
+      navigate('/login');
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (

@@ -1,64 +1,45 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
-  
-  // Tracks where the user is in the login flow: 'credentials', 'customer-pin', or 'admin-mfa'
-  const [authStep, setAuthStep] = useState('credentials'); 
-  
-  const [credentials, setCredentials] = useState({ userId: '', password: '' });
-  const [securityCode, setSecurityCode] = useState(''); // Shared state for both PIN and TOTP inputs
-  const [error, setError] = useState('');
+  const [showMfa, setShowMfa] = useState(false);
+  const [credentials, setCredentials] = useState({
+    email: '',
+    password: ''
+  });
 
-  const handlePrimaryAction = (e) => {
-    e.preventDefault();
-    setError('');
+  const [totp, setTotp] = useState('');
+  const [mfaToken, setMfaToken] = useState('');
 
-    if (authStep === 'customer-pin') {
-      // --- STAGE 2: CUSTOMER PIN VERIFICATION ---
-      if (securityCode.length === 6) {
-        onLoginSuccess({ role: 'customer', emailVerified: true, totpConfirmed: true });
-      } else {
-        setError('Please enter your 6-digit transaction PIN.');
-      }
-    } 
-    else if (authStep === 'admin-mfa') {
-      // --- STAGE 2: ADMIN STAFF MFA VERIFICATION ---
-      if (securityCode.length === 6) {
-        onLoginSuccess({ role: 'admin', emailVerified: true, totpConfirmed: true });
-      } else {
-        setError('Please enter a valid 6-digit authenticator code.');
-      }
-    } 
-    else {
-      // --- STAGE 1: CREDENTIAL VERIFICATION ---
-      const uid = credentials.userId.toUpperCase();
-      const pwd = credentials.password;
+  const handlePrimaryAction = async (e) => {
+  e.preventDefault();
 
-      // 1. Existing Customer (Has PIN)
-      if (uid === 'T1234567A' && pwd === 'password123') {
-        setAuthStep('customer-pin');
-      } 
-      // 2. New Customer (Simulates Backend "Soft 403" verification_required)
-      else if (uid === 'NEWUSER' && pwd === 'password123') {
-        // Skip the PIN screen and send the unverified flags to App.jsx!
-        onLoginSuccess({ 
-          role: 'customer', 
-          emailVerified: false, 
-          totpConfirmed: false 
-        });
-      }
-      // 3. Admin Staff (Uses Authenticator App)
-      else if (uid === 'ADMIN99' && pwd === 'admin123') {
-        setAuthStep('admin-mfa');
-      } 
-      // 4. Fail
-      else {
-        setError('Invalid NRIC/User ID or Password. Please check the testing credentials.');
-      }
+  try {
+    if (!showMfa) {
+      const response = await api.login(
+        credentials.email,
+        credentials.password
+      );
+
+      setMfaToken(response.mfa_token);
+      setShowMfa(true);
+
+    } else {
+
+      await api.verifyMfa(
+        mfaToken,
+        totp
+      );
+
+      onLoginSuccess();
     }
-  };
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -148,14 +129,18 @@ export default function Login({ onLoginSuccess }) {
             {authStep === 'credentials' ? (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>NRIC / User ID</label>
+                  <label htmlFor="email" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Email Address</label>
                   <input 
-                    id="userId"
+                    id="email"
                     type="text" 
                     required
-                    placeholder="e.g. T1234567A" 
-                    value={credentials.userId}
-                    onChange={(e) => setCredentials({...credentials, userId: e.target.value})}
+                    value={credentials.email}
+                    onChange={(e) =>
+                      setCredentials({
+                        ...credentials,
+                        email: e.target.value
+                      })
+                    }
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
                     onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
