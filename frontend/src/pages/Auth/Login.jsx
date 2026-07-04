@@ -59,7 +59,8 @@ export default function Login({ onLoginSuccess }) {
         onLoginSuccess({
           role: 'customer', // Assuming default customer, adjust if backend returns role
           emailVerified: true,
-          totpConfirmed: true
+          totpConfirmed: true,
+          pinSetupCompleted: true
         });
 
       } catch (err) {
