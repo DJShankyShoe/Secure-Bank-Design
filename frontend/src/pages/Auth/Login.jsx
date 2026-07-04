@@ -3,48 +3,59 @@ import { useNavigate } from 'react-router-dom';
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
-  const [showMfa, setShowMfa] = useState(false);
+  
+  // Tracks where the user is in the login flow: 'credentials', 'customer-pin', or 'admin-mfa'
+  const [authStep, setAuthStep] = useState('credentials'); 
+  
   const [credentials, setCredentials] = useState({ userId: '', password: '' });
-  const [totp, setTotp] = useState('');
+  const [securityCode, setSecurityCode] = useState(''); // Shared state for both PIN and TOTP inputs
   const [error, setError] = useState('');
 
   const handlePrimaryAction = (e) => {
     e.preventDefault();
     setError('');
 
-    if (showMfa) {
-      // --- MOCK MFA VERIFICATION ---
-      if (totp.length === 6) {
-        
-        // Check which user is logging in
-        if (credentials.userId.toUpperCase() === 'ADMIN99') {
-          // Admins go straight to their workspace
-          onLoginSuccess('admin');
-        } else {
-          // Customers are diverted to set up their transaction PIN first.
-          // They remain unauthenticated in the App state until SetupPin completes.
-          navigate('/setup-pin');
-        }
-
+    if (authStep === 'customer-pin') {
+      // --- STAGE 2: CUSTOMER PIN VERIFICATION ---
+      if (securityCode.length === 6) {
+        onLoginSuccess({ role: 'customer', emailVerified: true, totpConfirmed: true });
       } else {
-        setError('Please enter a valid 6-digit code.');
+        setError('Please enter your 6-digit transaction PIN.');
       }
-    } else {
-      // --- MOCK CREDENTIAL VERIFICATION ---
+    } 
+    else if (authStep === 'admin-mfa') {
+      // --- STAGE 2: ADMIN STAFF MFA VERIFICATION ---
+      if (securityCode.length === 6) {
+        onLoginSuccess({ role: 'admin', emailVerified: true, totpConfirmed: true });
+      } else {
+        setError('Please enter a valid 6-digit authenticator code.');
+      }
+    } 
+    else {
+      // --- STAGE 1: CREDENTIAL VERIFICATION ---
       const uid = credentials.userId.toUpperCase();
       const pwd = credentials.password;
 
-      // 1. Check for Mock Customer
+      // 1. Existing Customer (Has PIN)
       if (uid === 'T1234567A' && pwd === 'password123') {
-        setShowMfa(true);
+        setAuthStep('customer-pin');
       } 
-      // 2. Check for Mock Admin
+      // 2. New Customer (Simulates Backend "Soft 403" verification_required)
+      else if (uid === 'NEWUSER' && pwd === 'password123') {
+        // Skip the PIN screen and send the unverified flags to App.jsx!
+        onLoginSuccess({ 
+          role: 'customer', 
+          emailVerified: false, 
+          totpConfirmed: false 
+        });
+      }
+      // 3. Admin Staff (Uses Authenticator App)
       else if (uid === 'ADMIN99' && pwd === 'admin123') {
-        setShowMfa(true);
+        setAuthStep('admin-mfa');
       } 
-      // 3. Fail
+      // 4. Fail
       else {
-        setError('Invalid NRIC/User ID or Password. Please check your credentials.');
+        setError('Invalid NRIC/User ID or Password. Please check the testing credentials.');
       }
     }
   };
@@ -75,6 +86,30 @@ export default function Login({ onLoginSuccess }) {
           <p style={{ fontSize: '1.2rem', color: '#D1D5DB', maxWidth: '480px', lineHeight: '1.6', marginBottom: '48px' }}>
             Experience next-generation digital banking protected by layered security controls. Manage your wealth with absolute confidence.
           </p>
+
+          {/* TEMPORARY DEV BOX FOR MOCK CREDENTIALS */}
+          <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderLeft: '4px solid #3B82F6', padding: '24px', borderRadius: '0 8px 8px 0', maxWidth: '500px', backdropFilter: 'blur(8px)' }}>
+            <h3 style={{ color: '#93C5FD', fontSize: '1.05rem', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
+              🛠️ Developer Testing Credentials
+            </h3>
+            <div style={{ color: '#E5E7EB', fontSize: '0.95rem', margin: 0, lineHeight: '1.6' }}>
+              <strong>1. Existing Customer (Has PIN):</strong><br/>
+              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>T1234567A</code><br/>
+              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
+              <div style={{ margin: '8px 0', borderTop: '1px solid #1E40AF' }}></div>
+              
+              <strong>2. New Customer (Soft 403 test):</strong><br/>
+              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>NEWUSER</code><br/>
+              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
+              <div style={{ margin: '8px 0', borderTop: '1px solid #1E40AF' }}></div>
+              
+              <strong>3. Admin View:</strong><br/>
+              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>ADMIN99</code><br/>
+              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>admin123</code>
+              
+              <p style={{ marginTop: '12px', fontSize: '0.85rem', color: '#93C5FD' }}>* For accounts that require a 2nd step, enter any 6 digits.</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -88,11 +123,17 @@ export default function Login({ onLoginSuccess }) {
               <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
               End-to-End Encrypted
             </div>
+            
+            {/* Dynamic Headers based on user type */}
             <h2 style={{ fontSize: '2rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>
-              {showMfa ? "2-Step Verification" : "Welcome Back"}
+              {authStep === 'customer-pin' && "Security PIN"}
+              {authStep === 'admin-mfa' && "Staff Authentication"}
+              {authStep === 'credentials' && "Welcome Back"}
             </h2>
             <p style={{ color: '#4B5563', fontSize: '1.05rem', margin: 0 }}>
-              {showMfa ? "Enter the 6-digit code generated by your authenticator app to securely access your account." : "Please enter your credentials to securely access your accounts."}
+              {authStep === 'customer-pin' && "Please enter your 6-digit transaction PIN to confirm your identity."}
+              {authStep === 'admin-mfa' && "Enter the 6-digit code generated by your corporate authenticator app."}
+              {authStep === 'credentials' && "Please enter your credentials to securely access your accounts."}
             </p>
           </div>
 
@@ -103,7 +144,8 @@ export default function Login({ onLoginSuccess }) {
           )}
 
           <form onSubmit={handlePrimaryAction} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {!showMfa ? (
+            
+            {authStep === 'credentials' ? (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>NRIC / User ID</label>
@@ -140,15 +182,18 @@ export default function Login({ onLoginSuccess }) {
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label htmlFor="totp" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>6-Digit TOTP Code</label>
+                <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>
+                  {authStep === 'customer-pin' ? "6-Digit PIN" : "6-Digit TOTP Code"}
+                </label>
                 <input 
-                  id="totp"
-                  type="text" 
+                  id="securityCode"
+                  type="password" 
+                  inputMode="numeric"
                   maxLength="6"
                   required
                   placeholder="• • • • • •" 
-                  value={totp}
-                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                  value={securityCode}
+                  onChange={(e) => setSecurityCode(e.target.value.replace(/\D/g, ''))}
                   style={{ padding: '16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1.5rem', letterSpacing: '8px', textAlign: 'center', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB', fontWeight: '700' }}
                   onFocus={(e) => e.target.style.borderColor = '#E32636'}
                   onBlur={(e) => e.target.style.borderColor = '#E5E7EB'} 
@@ -163,13 +208,16 @@ export default function Login({ onLoginSuccess }) {
                 onMouseOver={(e) => e.target.style.backgroundColor = '#B91C1C'}
                 onMouseOut={(e) => e.target.style.backgroundColor = '#E32636'}
               >
-                {showMfa ? "Authenticate" : "Secure Log In"}
+                {authStep !== 'credentials' ? "Authenticate" : "Secure Log In"}
               </button>
               
-              {showMfa ? (
+              {authStep !== 'credentials' ? (
                 <button 
                   type="button" 
-                  onClick={() => setShowMfa(false)}
+                  onClick={() => {
+                    setAuthStep('credentials');
+                    setSecurityCode('');
+                  }}
                   style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#6B7280', border: 'none', cursor: 'pointer', fontSize: '0.95rem', fontWeight: '600', transition: 'color 0.2s' }}
                   onMouseOver={(e) => e.target.style.color = '#111827'}
                   onMouseOut={(e) => e.target.style.color = '#6B7280'}
