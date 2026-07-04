@@ -2,11 +2,58 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - Frontend
+      - dev
+    
+
   pull_request:
+    branches:
+      - main
 
 jobs:
-  lint-sast-test:
+  frontend:
+    name: Frontend Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Security audit (npm)
+        run: npm audit --audit-level=high
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
+
+  backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:16
@@ -19,11 +66,12 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     defaults:
       run:
         working-directory: backend
+
     env:
-      # Non-secret CI values (the AES key is a throwaway test key, not production).
       FLASK_SECRET_KEY: ci-only-secret-key
       AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
       DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
@@ -33,25 +81,26 @@ jobs:
       SMTP_PORT: "587"
       SMTP_FROM: no-reply@securebank.example
       TOTP_ISSUER: SecureBank
-      # FORCE_HTTPS defaults to "true" in the test conftest so the HSTS/redirect
-      # and Secure-cookie tests run as intended.
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Lint (flake8, PEP 8 — NFR-05)
+      - name: Lint (flake8)
         run: flake8 app
 
-      - name: SAST (Bandit — no high/medium, §14.7)
+      - name: SAST (Bandit)
         run: bandit -r app -ll
 
-      - name: Apply schema, roles and grants (sql/)
+      - name: Apply schema, roles and grants
         env:
           PGPASSWORD: postgres
         run: |
@@ -64,24 +113,27 @@ jobs:
              ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
              ALTER ROLE admin_reader PASSWORD 'ar_pw';"
 
-      - name: Tests (pytest)
+      - name: Run tests
         run: pytest -q
 
   dependency-check:
-    # OWASP Dependency-Check on the pinned requirements (SR-07).
+    name: Dependency Check
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: OWASP Dependency-Check
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: OWASP Dependency Check
         uses: dependency-check/Dependency-Check_Action@main
         with:
           project: SecureBank-Backend
           path: backend
           format: HTML
-          # Fail the build on a CVSS >= 7 (high) finding.
           args: >-
             --failOnCVSS 7
             --enableExperimental
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
