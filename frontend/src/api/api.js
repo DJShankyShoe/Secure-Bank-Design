@@ -118,6 +118,15 @@ export const api = {
       }),
     }),
 
+
+  verifySignupEmail: (token) =>
+  request("/auth/register/verify-email", {
+    method: "POST",
+    body: JSON.stringify({
+      token,
+    }),
+  }),
+
   login: async (email, password) => {
     csrfToken = null;
 

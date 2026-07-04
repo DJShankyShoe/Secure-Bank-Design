@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function VerifyEmail() {
   const navigate = useNavigate();
@@ -10,27 +11,22 @@ export default function VerifyEmail() {
   const [status, setStatus] = useState('loading');
 
   useEffect(() => {
-    // If someone visits the page without a token in the URL
-    if (!token) {
-      setStatus('error');
-      return;
-    }
+    const verifyEmail = async () => {
+      if (!token) {
+        setStatus('error');
+        return;
+      }
 
-    // TODO (Backend):
-    // 1. Send GET or POST request to /auth/verify?token={token}
-    // 2. Validate token signature and expiration.
-    // 3. Update the user's `email_verified` flag to true in the database.
-    // 4. Return success or error based on the DB operation.
-    
-    console.log("Mock verifying email token:", token);
+      try {
+        await api.verifySignupEmail(token);
+        setStatus('success');
+      } catch (err) {
+        console.error(err);
+        setStatus('error');
+      }
+    };
 
-    // Mock network delay to show the loading state for 2 seconds
-    const timer = setTimeout(() => {
-      // Simulate a successful verification
-      setStatus('success');
-    }, 2000);
-
-    return () => clearTimeout(timer);
+    verifyEmail();
   }, [token]);
 
   return (

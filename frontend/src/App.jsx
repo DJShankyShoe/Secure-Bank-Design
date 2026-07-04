@@ -103,6 +103,7 @@ export default function App() {
           path="/verify-email" 
           element={<VerifyEmail onVerificationComplete={() => setAuth({ ...auth, emailVerified: true })} />} 
         />
+        <Route path="/verify-signup" element={<VerifyEmail />} />
         <Route 
           path="/setup-pin" 
           element={<SetupPin onSetupComplete={() => setAuth({ ...auth, totpConfirmed: true })} />} 
