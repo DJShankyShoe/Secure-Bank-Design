@@ -92,12 +92,23 @@ def generate_reference_number() -> str:
 # --------------------------------------------------------------------------- #
 
 def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_ip: str) -> None:
-    """Set/replace the 6-digit transaction PIN after re-verifying the password (SR-12)."""
+    """Set or replace the 6-digit transaction PIN (SR-12).
+
+    First-time setup (no PIN exists yet) does NOT require the password: the caller
+    is already authenticated and there is no money-moving credential to protect
+    (decided 2026-07-05). **Replacing** an existing PIN still re-verifies the
+    password, so a hijacked/unattended session cannot silently swap the PIN that
+    guards high-value transfers. Generic errors only (never reveal which factor).
+    """
     pin = validate_transaction_pin(pin)
     session = db.app_session()
     try:
         user = session.get(User, user_id)
-        if user is None or not crypto.verify_password(user.password_hash, password or ""):
+        if user is None:
+            raise InvalidPin()
+        replacing = user.transaction_pin_hash is not None
+        # Re-authenticate only when replacing an existing PIN.
+        if replacing and not crypto.verify_password(user.password_hash, password or ""):
             emit_audit("PIN_SET", "failure", source_ip=source_ip,
                        actor_user_id=user_id, target_user_id=user_id,
                        action_detail={"reason": "bad_password"})
@@ -107,7 +118,8 @@ def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_i
     finally:
         session.close()
     emit_audit("PIN_SET", "success", source_ip=source_ip,
-               actor_user_id=user_id, actor_role="customer", target_user_id=user_id)
+               actor_user_id=user_id, actor_role="customer", target_user_id=user_id,
+               action_detail={"first_time": not replacing})
 
 
 def is_transaction_pin_set(*, user_id: uuid.UUID) -> bool:

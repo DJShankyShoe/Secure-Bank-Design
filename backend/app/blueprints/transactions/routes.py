@@ -28,7 +28,10 @@ def _json() -> dict:
 @bp.post("/pin")
 @require_authenticated
 def set_pin():
-    """Set/replace the transaction PIN (SR-12). Body: ``password``, ``pin``."""
+    """Set/replace the transaction PIN (SR-12). Body: ``pin`` and, when replacing
+    an existing PIN, ``password``. First-time setup omits the password (the caller
+    is already authenticated and no PIN yet exists); replacing re-verifies it.
+    """
     body = _json()
     try:
         set_transaction_pin(user_id=g.user_id, password=body.get("password", ""),

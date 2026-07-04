@@ -95,6 +95,20 @@ def test_set_pin_success_and_wrong_password(require_db, txn_app):
     assert r.status_code == 401
 
 
+def test_first_time_pin_set_needs_no_password(require_db, txn_app):
+    # First-time setup omits the password entirely and still succeeds (2026-07-05).
+    c, _ = _setup_user(txn_app)
+    r = c.post("/transactions/pin", json={"pin": _PIN}, base_url=_HTTPS)
+    assert r.status_code == 200
+    assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is True
+    # Replacing now DOES require the password: omitting it -> 401.
+    r2 = c.post("/transactions/pin", json={"pin": "246810"}, base_url=_HTTPS)
+    assert r2.status_code == 401
+    # ...and succeeds with the correct password.
+    r3 = c.post("/transactions/pin", json={"password": _PW, "pin": "246810"}, base_url=_HTTPS)
+    assert r3.status_code == 200
+
+
 def test_pin_status_reflects_whether_set(require_db, txn_app):
     c, _ = _setup_user(txn_app)
     assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is False

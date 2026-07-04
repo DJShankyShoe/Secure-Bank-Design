@@ -73,7 +73,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `GET /accounts/preferences` | Auth | View notification preferences |
 | `PUT /accounts/preferences` | Auth | Update notification preferences |
 | `POST /accounts/{id}/close` | Auth | Request closure (→ admin approval) |
-| `POST /transactions/pin` | Auth | Set/replace the transaction PIN |
+| `POST /transactions/pin` | Auth | Set/replace the transaction PIN (password only when replacing) |
 | `GET /transactions/pin` | Auth | Whether a PIN is set (`pin_set`) |
 | `GET /transactions/billers` | Auth | List allowlisted billers |
 | `POST /transactions/transfer` | Auth | Transfer funds (`Idempotency-Key`) |
@@ -312,10 +312,17 @@ While `close_requested` the account is **frozen** (no transfers in/out) until an
 
 ## Transactions — `/transactions`  *(all require auth)*
 
-### `POST /transactions/pin`  — set/replace the 6-digit transaction PIN (re-verifies password)
+### `POST /transactions/pin`  — set/replace the 6-digit transaction PIN
 ```jsonc
-{ "password": "...", "pin": "135790" }      // → 200 { "status": "pin_set" }
+// FIRST-TIME setup (no PIN yet): password NOT required
+{ "pin": "135790" }                         // → 200 { "status": "pin_set" }
+
+// REPLACING an existing PIN: current password IS required
+{ "password": "...", "pin": "246810" }      // → 200 { "status": "pin_set" }  (401 if wrong/missing)
 ```
+First-time setup skips the password (the caller is already authenticated and no PIN yet exists);
+replacing an existing PIN re-verifies it, so a hijacked session can't silently swap it. Use
+`GET /transactions/pin` (`pin_set`) to decide which form to show.
 
 ### `GET /transactions/pin`  — has the user set a transaction PIN yet?
 ```jsonc
