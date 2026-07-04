@@ -1,75 +1,92 @@
 import React, { useState } from 'react';
 
 export default function ManageAccount() {
-  const [newEmail, setNewEmail] = useState('');
-  const [totpCode, setTotpCode] = useState('');
-  const [accountToClose, setAccountToClose] = useState('');
+  const [openData, setOpenData] = useState({ type: 'savings' });
+  const [closeData, setCloseData] = useState({ accountId: '', totpCode: '' });
 
-  const handleUpdateEmail = async (e) => {
+  const handleOpenAccount = async (e) => {
     e.preventDefault();
-    // TODO 
-    // 1. Validate email format (RFC 5322) server-side (SR-06).
-    // 2. Send time-limited verification link (30 mins) to the new email.
-    // 3. Do NOT change email until link is clicked.
-    console.log("Mock Email Update request for:", newEmail);
-    alert("Verification link sent to your new email.");
+    // TODO (Backend): POST /admin/accounts/requests
+    // Creates a new request with status 'pending' for admin approval.
+    console.log("Mock Open Account Request:", openData);
+    alert("Account opening request submitted for review.");
   };
 
   const handleCloseAccount = async (e) => {
     e.preventDefault();
-    // TODO
+    // TODO (Backend): POST /admin/accounts/{id}/closure
     // 1. Verify account balance == 0.
-    // 2. Verify the fresh TOTP code provided (SR-11).
-    // 3. Mark account as closed and log to audit_events (SR-14).
-    console.log(`Mock Close Account: ${accountToClose} with TOTP: ${totpCode}`);
-    alert("Account closure request submitted.");
+    // 2. Verify the TOTP code.
+    // 3. Mark account status as 'close_requested' for admin approval.
+    console.log(`Mock Close Account Request:`, closeData);
+    alert("Account closure request submitted for review.");
   };
 
   return (
     <section className="section">
       <div className="section-header">
         <div>
-          <h2 className="section-title">Manage Accounts</h2>
-          <div className="helper-text">Update your contact details or request account closure.</div>
+          <h2 className="section-title">Account Management</h2>
+          <div className="helper-text">Request a new account or close an existing one.</div>
         </div>
       </div>
 
       <div className="dual-grid">
+        
+        {/* LEFT: Request New Account */}
         <div className="content-card">
-          <h3 className="card-title">Update Email Address</h3>
-          <form onSubmit={handleUpdateEmail} className="form-grid">
+          <h3 className="card-title">Open New Account</h3>
+          <p className="helper-text" style={{ marginBottom: '16px' }}>
+            Submit a request to open an additional account. All requests are subject to approval.
+          </p>
+          <form onSubmit={handleOpenAccount} className="form-grid">
             <div className="field">
-              <label>New Email Address</label>
-              <input type="email" required value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+              <label>Account Type</label>
+              <select required value={openData.type} onChange={(e) => setOpenData({...openData, type: e.target.value})}>
+                <option value="savings">Savings Account</option>
+                <option value="current">Current Account</option>
+                <option value="fixed_deposit">Fixed Deposit Account</option>
+              </select>
             </div>
             <div className="hero-actions" style={{ marginTop: '10px' }}>
-              <button type="submit" className="primary-button">Send Verification Link</button>
+              <button type="submit" className="primary-button">Submit Request</button>
             </div>
           </form>
         </div>
 
+        {/* RIGHT: Close Existing Account */}
         <div className="content-card">
-          <h3 className="card-title" style={{ color: '#d93025' }}>Close Account</h3>
+          <h3 className="card-title" style={{ color: '#DC2626' }}>Close Account</h3>
           <p className="helper-text" style={{ marginBottom: '16px' }}>
-            Account balance must be SGD 0.00 to proceed. Requires TOTP verification.
+            Account balance must be exactly SGD 0.00 to proceed. Requires TOTP verification.
           </p>
           <form onSubmit={handleCloseAccount} className="form-grid">
             <div className="field">
               <label>Select Account to Close</label>
-              <select required value={accountToClose} onChange={(e) => setAccountToClose(e.target.value)}>
+              <select required value={closeData.accountId} onChange={(e) => setCloseData({...closeData, accountId: e.target.value})}>
                 <option value="">-- Select Account --</option>
                 <option value="acc_1">Savings (****4831)</option>
+                <option value="acc_2">Current (****9264)</option>
               </select>
             </div>
             <div className="field">
               <label>Authenticator Code (TOTP)</label>
-              <input type="text" maxLength="6" required placeholder="123456" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
+              <input 
+                type="text" 
+                inputMode="numeric"
+                maxLength="6" 
+                required 
+                placeholder="123456" 
+                value={closeData.totpCode} 
+                onChange={(e) => setCloseData({...closeData, totpCode: e.target.value.replace(/\D/g, '')})} 
+              />
             </div>
             <div className="hero-actions" style={{ marginTop: '10px' }}>
-              <button type="submit" className="secondary-button" style={{ borderColor: '#d93025', color: '#d93025' }}>Close Account</button>
+              <button type="submit" className="secondary-button" style={{ borderColor: '#DC2626', color: '#DC2626' }}>Request Closure</button>
             </div>
           </form>
         </div>
+
       </div>
     </section>
   );

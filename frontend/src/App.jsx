@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
+// Settings.jsx
+import Settings from './pages/Settings/Settings.jsx';
+
 // Layouts
 import Layout from './components/Layout.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
@@ -25,6 +28,7 @@ import AdminUsers from './pages/Admin/Users.jsx';
 import AdminOpenings from './pages/Admin/Openings.jsx';
 import AdminClosures from './pages/Admin/Closures.jsx';
 import AdminAudit from './pages/Admin/Audit.jsx';
+
 
 export default function App() {
   // Track both authentication status AND the user's role
@@ -61,6 +65,7 @@ export default function App() {
           <Route path="/bills" element={auth.isAuthenticated && auth.role === 'customer' ? <PayBill /> : <Navigate to="/login" replace />} />
           <Route path="/accounts/create" element={auth.isAuthenticated && auth.role === 'customer' ? <CreateAccount /> : <Navigate to="/login" replace />} />
           <Route path="/accounts" element={auth.isAuthenticated && auth.role === 'customer' ? <ManageAccount /> : <Navigate to="/login" replace />} />
+          <Route path="/settings" element={auth.isAuthenticated && auth.role === 'customer' ? <Settings /> : <Navigate to="/login" replace />} />
         </Route>
 
         {/* ADMIN PORTAL (Strictly locked to role === 'admin') */}

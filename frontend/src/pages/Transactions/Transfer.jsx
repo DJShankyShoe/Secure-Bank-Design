@@ -1,8 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 
 export default function Transfer() {
-  const projectedFee = useMemo(() => "SGD 0.00", []);
-  
   // Consolidate all form fields into one state object
   const [formData, setFormData] = useState({
     sourceAccount: 'Savings Account • ****4831',
@@ -142,12 +140,8 @@ export default function Transfer() {
                 )}
               </li>
               <li className="row-between">
-                <span className="table-muted">Projected fee</span>
-                <strong>{projectedFee}</strong>
-              </li>
-              <li className="row-between">
                 <span className="table-muted">Receipt channel</span>
-                <strong>Email and transaction history</strong>
+                <strong>Transaction history (& Email if enabled)</strong>
               </li>
             </ul>
 

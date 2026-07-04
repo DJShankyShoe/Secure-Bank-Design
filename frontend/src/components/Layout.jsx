@@ -7,6 +7,7 @@ const navItems = [
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
+  { id: "settings", label: "Settings", badge: "", path: "/settings" },
 ];
 
 export default function Layout({ onLogout }) {
