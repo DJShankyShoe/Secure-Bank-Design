@@ -423,22 +423,50 @@ The application will be available at http://localhost:5173. Any changes saved to
 ## Project Structure
 The codebase is modularized to strictly separate routing, layout, and domain-specific pages.
 ```
-frontend/
+/ (Project Root)
 ├── src/
 │   ├── components/
-│   │   └── Layout.jsx          # Shared TopBar and Sidebar wrapper for authenticated routes
+│   │   ├── Layout.jsx              # Customer Portal navigation shell (sidebar/header)
+│   │   └── AdminLayout.jsx         # Admin Staff navigation shell
+│   │
 │   ├── pages/
-│   │   ├── Accounts/           # Create.jsx, Manage.jsx
-│   │   ├── Admin/              # Panel.jsx (Protected admin view)
-│   │   ├── Auth/               # Login.jsx, Register.jsx, ForgotPassword.jsx, ResetPassword.jsx
-│   │   ├── Dashboard/          # Overview.jsx, History.jsx
-│   │   └── Transactions/       # Transfer.jsx, PayBill.jsx
-│   ├── App.jsx                 # Core React Router setup & access control
-│   ├── main.jsx                # React DOM mounting point
-│   └── styles.css              # Global application styling
-├── index.html                  # Main HTML entry point
-├── package.json                # Project metadata and dependencies
-└── vite.config.js              # Vite bundler configuration
+│   │   ├── Auth/
+│   │   │   ├── Login.jsx                 
+│   │   │   ├── Register.jsx              
+│   │   │   ├── RegisterTotpSetup.jsx     # Authenticator setup page
+│   │   │   ├── ForgotPassword.jsx        
+│   │   │   ├── ResetPassword.jsx         
+│   │   │   ├── SetupPin.jsx              
+│   │   │   └── VerifyEmail.jsx           
+│   │   │
+│   │   ├── Dashboard/
+│   │   │   ├── Overview.jsx              # Customer main dashboard (balances, cards)
+│   │   │   └── History.jsx               # Filterable transaction history
+│   │   │
+│   │   ├── Transactions/
+│   │   │   ├── Transfer.jsx              # Evaluates amounts >= $1,000 to trigger PIN confirmation
+│   │   │   └── PayBill.jsx               # Instant bill payment to registered billers
+│   │   │
+│   │   ├── Accounts/
+│   │   │   └── Manage.jsx                # Open new accounts OR close existing ones
+│   │   │
+│   │   ├── Settings/
+│   │   │   └── Settings.jsx              # Consolidated: Update Email, Password, and UI notification toggles
+│   │   │
+│   │   └── Admin/
+│   │       ├── Users.jsx                 # User directory, NRIC reveal, account lock/suspend toggles
+│   │       ├── Openings.jsx              # Approve/Reject new account requests
+│   │       ├── Closures.jsx              # Approve/Reject account deletion requests
+│   │       └── Audit.jsx                 # System logs and security events
+│   │
+│   ├── App.jsx                     # Global Auth State & "Traffic Cop" Protected Routing
+│   ├── index.css                   # Global CSS (Theme colors, grid layouts, component classes)
+│   └── main.jsx                    # React DOM entry point
+│
+├── index.html                      # Primary HTML template
+├── package.json                    # Project dependencies and run scripts (npm run dev / build)
+├── package-lock.json               # Dependency version lockfile
+└── vite.config.js                  # Vite bundler configuration
 ```
 ---
 
