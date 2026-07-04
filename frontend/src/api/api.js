@@ -65,7 +65,10 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
       return request(endpoint, options, false);
     }
 
-    throw new Error(errorMessage);
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
 
   if (data.csrf_token) {
@@ -194,6 +197,12 @@ export const api = {
       }),
     }),
 
+    resendVerificationEmail: (email) =>
+    request("/auth/register/resend-email", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
   // =========================
   // ACCOUNTS
   // =========================
@@ -229,6 +238,27 @@ export const api = {
       }),
     }),
 
+    changePassword: (current_password, new_password) =>
+    request("/auth/password/change", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password,
+        new_password,
+      }),
+    }),
+
+    getAccountPreferences: () =>
+    request("/accounts/preferences", { method: "GET" }),
+    updateAccountPreferences: (prefs) =>
+      request("/accounts/preferences", {
+        method: "PUT",
+        body: JSON.stringify(prefs),
+      }),
+
+    checkResetToken: (token) =>
+    request(`/auth/password/reset/check?token=${token}`, {
+      method: "GET",
+    }),
   // =========================
   // TRANSACTIONS
   // =========================

@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { api } from "../../api/api";
 
 export default function VerifyEmail({ onVerificationComplete }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
 
   const [status, setStatus] = useState(token ? 'loading' : 'prompt');
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
+
+  // Prefill priority: navigation state (passed from Login) -> sessionStorage -> blank
   const [email, setEmail] = useState(
-    sessionStorage.getItem("securebank_pending_email") || ""
+    location.state?.email ||
+    sessionStorage.getItem("securebank_pending_email") ||
+    ""
   );
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export default function VerifyEmail({ onVerificationComplete }) {
     setResendMessage('');
 
     try {
-      await api.resendSignupEmail(email);
+      await api.resendVerificationEmail(email);
       sessionStorage.setItem("securebank_pending_email", email);
       setResendMessage("Verification email sent. Please check your inbox.");
     } catch (err) {
@@ -54,24 +59,18 @@ export default function VerifyEmail({ onVerificationComplete }) {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await api.logout();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      sessionStorage.removeItem("securebank_user");
-      sessionStorage.removeItem("securebank_pending_email");
-      navigate('/login');
-    }
-  };
-
   const handleContinue = () => {
     if (onVerificationComplete) {
       onVerificationComplete();
     }
 
     sessionStorage.removeItem("securebank_pending_email");
+    navigate('/login');
+  };
+
+  // Plain "go back" — no session/logout side effects, since at this point
+  // (redirected from a failed login attempt) there usually isn't an active session yet.
+  const handleBackToLogin = () => {
     navigate('/login');
   };
 
@@ -118,9 +117,9 @@ export default function VerifyEmail({ onVerificationComplete }) {
               </div>
 
               <div>
-                <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Check Your Inbox</h2>
+                <h2 style={{ fontSize: '2 rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Check Your Inbox</h2>
                 <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>
-                  We've sent a secure verification link to your email address. Please click the link to activate your account.
+                  Please complete email verification to activate your account. If you did not receive the email, you can resend it below.
                 </p>
               </div>
 
@@ -169,14 +168,29 @@ export default function VerifyEmail({ onVerificationComplete }) {
                     ✓ {resendMessage}
                   </p>
                 )}
-              </div>
 
-              <button
-                onClick={handleLogout}
-                style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: '0.95rem', marginTop: '16px', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                Log in with a different account
-              </button>
+                {/* NEW: Back button */}
+                <button
+                  onClick={handleBackToLogin}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    marginTop: '12px',
+                    backgroundColor: 'transparent',
+                    color: '#374151',
+                    border: '2px solid #E5E7EB',
+                    borderRadius: '8px',
+                    fontSize: '0.95rem',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'border-color 0.2s, color 0.2s'
+                  }}
+                  onMouseOver={(e) => { e.target.style.borderColor = '#111827'; }}
+                  onMouseOut={(e) => { e.target.style.borderColor = '#E5E7EB'; }}
+                >
+                  ← Back to Login
+                </button>
+              </div>
             </div>
           )}
 
@@ -237,9 +251,26 @@ export default function VerifyEmail({ onVerificationComplete }) {
                   navigate('/verify-email');
                   setStatus('prompt');
                 }}
-                style={{ width: '100%', padding: '16px', backgroundColor: '#111827', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
+                style={{ width: '100%', padding: '16px', backgroundColor: '#271711', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
               >
                 Request a new link
+              </button>
+
+              {/* NEW: Back button on error state too */}
+              <button
+                onClick={handleBackToLogin}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  backgroundColor: 'transparent',
+                  color: '#6B7280',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.95rem',
+                  fontWeight: '600'
+                }}
+              >
+                ← Back to Login
               </button>
             </div>
           )}

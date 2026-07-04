@@ -4,11 +4,11 @@ import { api } from "../../api/api";
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
-  
+
   // UI State
   const [authStep, setAuthStep] = useState('credentials'); // 'credentials' or 'mfa'
   const [error, setError] = useState('');
-  
+
   // Data State
   const [credentials, setCredentials] = useState({ email: '', password: '' });
   const [securityCode, setSecurityCode] = useState('');
@@ -22,7 +22,7 @@ export default function Login({ onLoginSuccess }) {
       // --- STAGE 1: CREDENTIAL VERIFICATION ---
       try {
         const response = await api.login(credentials.email, credentials.password);
-        
+
         // If login succeeds and requires a second step, the backend gives us an MFA token
         setMfaToken(response.mfa_token);
         setAuthStep('mfa');
@@ -31,12 +31,18 @@ export default function Login({ onLoginSuccess }) {
         // --- SOFT 403 HANDLING (The Traffic Cop Integration) ---
         // If the backend throws an error but it's specifically our verification prompt...
         if (err.status === 403 && err.data && err.data.status === "verification_required") {
-          // Send the user to App.jsx, which will redirect them to Verify Email or Setup PIN
-          onLoginSuccess({
-            role: 'customer', // Defaulting to customer for onboarding
-            emailVerified: err.data.email_verified,
-            totpConfirmed: err.data.totp_confirmed
-          });
+
+          // Stash the email so the next page can prefill / resend to it
+          sessionStorage.setItem("securebank_pending_email", credentials.email);
+
+          // NOTE: adjust this check to match whatever field your backend actually
+          // sends to distinguish "email not verified" vs "OTP/TOTP not completed".
+          // Common alternatives: err.data.reason, err.data.code, err.data.verification_type
+          if (err.data.reason === "otp_not_completed") {
+            navigate('/register/totp', { state: { email: credentials.email } });
+          } else {
+            navigate('/verify-email', { state: { email: credentials.email } });
+          }
           return;
         }
 
@@ -48,7 +54,7 @@ export default function Login({ onLoginSuccess }) {
       // --- STAGE 2: MFA / PIN VERIFICATION ---
       try {
         await api.verifyMfa(mfaToken, securityCode);
-        
+
         // If MFA succeeds, they are fully verified!
         onLoginSuccess({
           role: 'customer', // Assuming default customer, adjust if backend returns role
@@ -64,7 +70,7 @@ export default function Login({ onLoginSuccess }) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      
+
       {/* LEFT PANEL: Branding & Engagement */}
       <div style={{ flex: '1.2', backgroundColor: '#111827', color: '#ffffff', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '600px', height: '600px', backgroundColor: '#E32636', borderRadius: '50%', filter: 'blur(120px)', opacity: '0.15', zIndex: 0 }}></div>
@@ -93,15 +99,15 @@ export default function Login({ onLoginSuccess }) {
 
       {/* RIGHT PANEL: Authentication Form */}
       <div style={{ flex: '1', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 8%', minWidth: '500px' }}>
-        
+
         <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
-          
+
           <div style={{ marginBottom: '40px' }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', backgroundColor: '#ECFDF5', color: '#065F46', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', marginBottom: '24px' }}>
               <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
               End-to-End Encrypted
             </div>
-            
+
             <h2 style={{ fontSize: '2rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>
               {authStep === 'mfa' ? "Security Verification" : "Welcome Back"}
             </h2>
@@ -117,74 +123,74 @@ export default function Login({ onLoginSuccess }) {
           )}
 
           <form onSubmit={handlePrimaryAction} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
+
             {authStep === 'credentials' ? (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <label htmlFor="email" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Email Address</label>
-                  <input 
+                  <input
                     id="email"
-                    type="email" 
+                    type="email"
                     required
                     placeholder="name@example.com"
                     value={credentials.email}
                     onChange={(e) => setCredentials({ ...credentials, email: e.target.value })}
-                    style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
+                    style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }}
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
                     onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
                   />
                 </div>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <label htmlFor="password" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Password</label>
                     <button type="button" onClick={() => navigate('/forgot-password')} style={{ fontSize: '0.9rem', color: '#E32636', border: 'none', background: 'none', padding: 0, fontWeight: '600', cursor: 'pointer' }}>Forgot password?</button>
                   </div>
-                  <input 
+                  <input
                     id="password"
-                    type="password" 
+                    type="password"
                     required
-                    placeholder="Enter your password" 
+                    placeholder="Enter your password"
                     value={credentials.password}
                     onChange={(e) => setCredentials({ ...credentials, password: e.target.value })}
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }}
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
-                    onBlur={(e) => e.target.style.borderColor = '#E5E7EB'} 
+                    onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
                   />
                 </div>
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>6-Digit PIN</label>
-                <input 
+                <input
                   id="securityCode"
-                  type="password" 
+                  type="password"
                   inputMode="numeric"
                   maxLength="6"
                   required
-                  placeholder="• • • • • •" 
+                  placeholder="• • • • • •"
                   value={securityCode}
                   onChange={(e) => setSecurityCode(e.target.value.replace(/\D/g, ''))}
                   style={{ padding: '16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1.5rem', letterSpacing: '8px', textAlign: 'center', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB', fontWeight: '700' }}
                   onFocus={(e) => e.target.style.borderColor = '#E32636'}
-                  onBlur={(e) => e.target.style.borderColor = '#E5E7EB'} 
+                  onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
                 />
               </div>
             )}
 
             <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 style={{ width: '100%', padding: '16px', backgroundColor: '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', boxShadow: '0 4px 6px -1px rgba(227, 38, 54, 0.2), 0 2px 4px -1px rgba(227, 38, 54, 0.1)' }}
                 onMouseOver={(e) => e.target.style.backgroundColor = '#B91C1C'}
                 onMouseOut={(e) => e.target.style.backgroundColor = '#E32636'}
               >
                 {authStep !== 'credentials' ? "Authenticate" : "Secure Log In"}
               </button>
-              
+
               {authStep !== 'credentials' ? (
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => {
                     setAuthStep('credentials');
                     setSecurityCode('');
