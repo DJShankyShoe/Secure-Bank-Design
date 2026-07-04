@@ -1,37 +1,58 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+// import { api } from "../../api/api"; // Uncomment when your teammate builds the verification endpoints
 
-export default function VerifyEmail() {
+export default function VerifyEmail({ onVerificationComplete }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const token = searchParams.get("token");
+  const token = searchParams.get("token"); // e.g., ?token=12345abcdef
   
-  // States: 'loading', 'success', 'error'
-  const [status, setStatus] = useState('loading');
+  // If there's a token in the URL, verify it. Otherwise, show the prompt!
+  const [status, setStatus] = useState(token ? 'loading' : 'prompt');
+  
+  const [isResending, setIsResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState('');
 
   useEffect(() => {
-    // If someone visits the page without a token in the URL
-    if (!token) {
-      setStatus('error');
-      return;
+    if (status === 'loading' && token) {
+      // --- MOCK API VERIFICATION ---
+      // Replace this later with: await api.verifyEmailToken(token)
+      const timer = setTimeout(() => {
+        if (token === 'expired') {
+          setStatus('error');
+        } else {
+          setStatus('success');
+        }
+      }, 2000);
+
+      return () => clearTimeout(timer);
     }
+  }, [status, token]);
 
-    // TODO (Backend):
-    // 1. Send GET or POST request to /auth/verify?token={token}
-    // 2. Validate token signature and expiration.
-    // 3. Update the user's `email_verified` flag to true in the database.
-    // 4. Return success or error based on the DB operation.
+  const handleResendEmail = async () => {
+    setIsResending(true);
+    setResendMessage('');
     
-    console.log("Mock verifying email token:", token);
+    // --- MOCK API RESEND ---
+    // Replace this later with: await api.resendVerificationEmail(email)
+    setTimeout(() => {
+      setIsResending(false);
+      setResendMessage('A new verification link has been sent to your inbox.');
+    }, 1500);
+  };
 
-    // Mock network delay to show the loading state for 2 seconds
-    const timer = setTimeout(() => {
-      // Simulate a successful verification
-      setStatus('success');
-    }, 2000);
+  const handleContinue = () => {
+    if (onVerificationComplete) {
+      onVerificationComplete(); // Tells App.jsx the email is verified!
+    }
+    navigate('/dashboard'); // The App.jsx Traffic Cop will automatically intercept and push to /setup-pin if needed!
+  };
 
-    return () => clearTimeout(timer);
-  }, [token]);
+  const handleLogout = () => {
+    // Allows trapped users to escape if they logged into the wrong account
+    sessionStorage.removeItem("securebank_user");
+    window.location.href = "/login"; 
+  };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -52,11 +73,12 @@ export default function VerifyEmail() {
 
         <div style={{ padding: '60px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', zIndex: 1 }}>
           <h1 style={{ fontSize: '3.5rem', fontWeight: '800', lineHeight: '1.1', marginBottom: '24px', color: '#F9FAFB' }}>
-            Identity<br />
-            <span style={{ color: '#E32636' }}>Verified.</span>
+            Security<br />
+            <span style={{ color: '#E32636' }}>Requires</span><br />
+            Certainty.
           </h1>
           <p style={{ fontSize: '1.2rem', color: '#D1D5DB', maxWidth: '480px', lineHeight: '1.6', marginBottom: '48px' }}>
-            Confirming your email address ensures we can securely deliver important transaction receipts and account alerts.
+            Confirming your email address ensures we can securely deliver important transaction receipts, OTPs, and account alerts.
           </p>
         </div>
       </div>
@@ -66,6 +88,46 @@ export default function VerifyEmail() {
         
         <div style={{ maxWidth: '400px', width: '100%' }}>
           
+          {/* MODE 1: THE WAITING ROOM (No token, trapped user) */}
+          {status === 'prompt' && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
+              <div style={{ width: '64px', height: '64px', backgroundColor: '#EFF6FF', color: '#2563EB', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
+                <svg width="32" height="32" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+              </div>
+              <div>
+                <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Check Your Inbox</h2>
+                <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>
+                  We've sent a secure verification link to your email address. Please click the link to activate your account.
+                </p>
+              </div>
+              
+              <div style={{ width: '100%', marginTop: '8px' }}>
+                <button 
+                  onClick={handleResendEmail}
+                  disabled={isResending}
+                  style={{ width: '100%', padding: '16px', backgroundColor: isResending ? '#F3F4F6' : '#111827', color: isResending ? '#9CA3AF' : '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: isResending ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
+                >
+                  {isResending ? 'Sending...' : 'Resend Verification Email'}
+                </button>
+                
+                {resendMessage && (
+                  <p style={{ color: '#059669', fontSize: '0.9rem', marginTop: '12px', fontWeight: '500' }}>
+                    ✓ {resendMessage}
+                  </p>
+                )}
+              </div>
+              
+              {/* Escape Hatch in case they logged into the wrong account */}
+              <button 
+                onClick={handleLogout}
+                style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: '0.95rem', marginTop: '16px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Log in with a different account
+              </button>
+            </div>
+          )}
+
+          {/* MODE 2: PROCESSING A TOKEN */}
           {status === 'loading' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
               <div style={{ width: '48px', height: '48px', border: '4px solid #F3F4F6', borderTopColor: '#E32636', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
@@ -79,6 +141,7 @@ export default function VerifyEmail() {
             </div>
           )}
 
+          {/* MODE 3: SUCCESS */}
           {status === 'success' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
               <div style={{ width: '64px', height: '64px', backgroundColor: '#DEF7EC', color: '#059669', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
@@ -89,16 +152,15 @@ export default function VerifyEmail() {
                 <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>Your email address has been successfully confirmed. Your account is now fully active.</p>
               </div>
               <button 
-                onClick={() => navigate('/login')}
+                onClick={handleContinue}
                 style={{ width: '100%', padding: '16px', backgroundColor: '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
-                onMouseOver={(e) => e.target.style.backgroundColor = '#B91C1C'}
-                onMouseOut={(e) => e.target.style.backgroundColor = '#E32636'}
               >
-                Proceed to Log In
+                Continue to Dashboard
               </button>
             </div>
           )}
 
+          {/* MODE 4: ERROR / EXPIRED LINK */}
           {status === 'error' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
               <div style={{ width: '64px', height: '64px', backgroundColor: '#FEE2E2', color: '#DC2626', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
@@ -106,15 +168,16 @@ export default function VerifyEmail() {
               </div>
               <div>
                 <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Link Expired or Invalid</h2>
-                <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>This verification link is invalid or has already expired. Please log in to request a new link.</p>
+                <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>This verification link is invalid or has already expired.</p>
               </div>
               <button 
-                onClick={() => navigate('/login')}
+                onClick={() => {
+                  navigate('/verify-email'); // Clears the token from the URL
+                  setStatus('prompt');       // Sends them back to the Waiting Room
+                }}
                 style={{ width: '100%', padding: '16px', backgroundColor: '#111827', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
-                onMouseOver={(e) => e.target.style.backgroundColor = '#374151'}
-                onMouseOut={(e) => e.target.style.backgroundColor = '#111827'}
               >
-                Return to Log In
+                Request a new link
               </button>
             </div>
           )}
