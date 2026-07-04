@@ -8,8 +8,7 @@ const navItems = [
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },
-  { id: "settings", label: "Security Settings", badge: "TBD", path: "/settings" },
-  { id: "admin", label: "Admin View", badge: "ADMIN ONLY", path: "/admin" },
+  { id: "settings", label: "Settings", badge: "", path: "/settings" },
 ];
 
 export default function Layout({ onLogout }) {
@@ -72,7 +71,6 @@ export default function Layout({ onLogout }) {
         </aside>
 
         <main className="main-panel">
-          {/* This Outlet is the "window" where Dashboard, Transfer, etc. will render */}
           <Outlet /> 
         </main>
       </div>

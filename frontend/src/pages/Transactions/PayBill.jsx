@@ -146,19 +146,10 @@ export default function PayBill() {
                 onChange={handleAmountChange} 
               />
             </div>
-            <div className="field">
-              <label>Payment Date</label>
-              <input 
-                type="date" 
-                required 
-                value={paymentData.date} 
-                onChange={(e) => setPaymentData({...paymentData, date: e.target.value})} 
-              />
-            </div>
             
             <div className="field full">
               <div className="inline-note">
-                Please review the payment amount and payment date before submission.
+                Please review the payment amount before submission.
               </div>
             </div>
 
@@ -190,8 +181,8 @@ export default function PayBill() {
               <strong>SGD {paymentData.amount ? parseFloat(paymentData.amount).toFixed(2) : '0.00'}</strong>
             </li>
             <li className="row-between">
-              <span className="table-muted">Payment Date</span>
-              <strong>{paymentData.date || 'Not selected'}</strong>
+              <span className="table-muted">Receipt channel</span>
+              <strong>Transaction history (& Email if enabled)</strong>
             </li>
           </ul>
         </div>

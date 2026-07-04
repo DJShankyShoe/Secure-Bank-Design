@@ -202,12 +202,8 @@ export default function Transfer() {
                 )}
               </li>
               <li className="row-between">
-                <span className="table-muted">Projected fee</span>
-                <strong>{projectedFee}</strong>
-              </li>
-              <li className="row-between">
                 <span className="table-muted">Receipt channel</span>
-                <strong>Email and transaction history</strong>
+                <strong>Transaction history (& Email if enabled)</strong>
               </li>
             </ul>
 

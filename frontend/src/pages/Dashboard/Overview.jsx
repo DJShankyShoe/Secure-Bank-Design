@@ -60,7 +60,6 @@ export default function Dashboard() {
           <div className="hero-actions">
             <button className="primary-button" onClick={() => navigate('/transfer')}>Make a transfer</button>
             <button className="primary-button" onClick={() => navigate('/bills')}>Pay bills</button>
-            <button className="secondary-button" onClick={() => navigate('/settings')}>Security settings (TBD)</button>
           </div>
         </div>
       </section>
