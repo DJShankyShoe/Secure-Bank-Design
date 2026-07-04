@@ -3,14 +3,15 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - production
       - Frontend
-      - dev
-    
+      - backend
+      - integration-test
 
   pull_request:
     branches:
-      - main
+      - production
+      - integration-test
 
 jobs:
   frontend:
