@@ -41,6 +41,17 @@ def render_email(template_name: str, **context) -> str:
     return render_template(f"email/{template_name}", **context)
 
 
+def action_link(path: str, token: str) -> str:
+    """Build a clickable SPA link carrying a one-time token (FR-04/FR-09).
+
+    e.g. ``action_link("/reset-password", tok)`` ->
+    ``https://<frontend>/reset-password?token=<tok>``. The frontend origin comes
+    from ``FRONTEND_BASE_URL`` (config). Tokens are URL-safe, so no escaping needed.
+    """
+    base = current_app.extensions["securebank_config"].frontend_base_url
+    return f"{base}{path}?token={token}"
+
+
 def outbox() -> list[dict]:
     """The in-app captured-email list used under TESTING."""
     return current_app.extensions.setdefault("email_outbox", [])

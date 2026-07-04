@@ -23,7 +23,7 @@ from ...models import PendingEmailChange, User
 from ...security import lockout
 from ...security.validation import validate_email
 from ...services.audit import emit_audit
-from ...services.email import render_email, send_email
+from ...services.email import action_link, render_email, send_email
 
 
 class EmailChangeError(Exception):
@@ -59,6 +59,7 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) 
 
     session = db.app_session()
     target = None
+    old_email = None
     token = None
     try:
         user = session.get(User, user_id)
@@ -66,6 +67,7 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) 
             raise InvalidToken()
         if new_email == user.email:
             raise SameEmail()
+        old_email = user.email  # captured for the security alert to the OLD address
 
         # Per-account anti-spam (email bombing / SMTP quota / sender reputation).
         # Counted before the address-in-use check so it can't be bypassed.
@@ -101,11 +103,21 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) 
         session.close()
 
     if target and token:
+        # Verification link to the NEW address (only this confirms the change).
         send_email(
             to=target,
             subject="Confirm your new SecureBank email",
-            body=render_email("verify_email.txt", token=token),
+            body=render_email("verify_email.txt",
+                              verify_url=action_link("/verify-email", token)),
         )
+        # Security alert to the OLD address (no token) so a hijacked session that
+        # changes the email is noticed by the real owner (FR-04).
+        if old_email:
+            send_email(
+                to=old_email,
+                subject="SecureBank email change requested",
+                body=render_email("email_change_alert.txt", new_email=target),
+            )
         emit_audit("EMAIL_CHANGE_REQUEST", "success", source_ip=source_ip,
                    actor_user_id=user_id, actor_role="customer", target_user_id=user_id)
 

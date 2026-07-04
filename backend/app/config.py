@@ -106,6 +106,7 @@ class Config:
     smtp_from: str
     totp_issuer: str
     force_https: bool
+    frontend_base_url: str  # origin of the SPA; used to build clickable email links (FR-04/09)
     cleanup_interval_seconds: int  # in-app prune cadence; 0 disables (use external cron)
 
     # ── Centralised security thresholds / tunables ────────────────
@@ -118,13 +119,14 @@ class Config:
     SESSION_ABSOLUTE_LIFETIME: ClassVar[timedelta] = timedelta(hours=8)  # SR-13
     MFA_PENDING_TOKEN_TTL: ClassVar[timedelta] = timedelta(minutes=5)    # stage-1 token
     EMAIL_VERIFY_TOKEN_TTL: ClassVar[timedelta] = timedelta(minutes=30)  # email re-verify (FR-04)
+    SIGNUP_EMAIL_TOKEN_TTL: ClassVar[timedelta] = timedelta(hours=24)  # signup verify (FR-01)
 
     IDEMPOTENCY_TTL: ClassVar[timedelta] = timedelta(hours=24)  # SR-08
 
     TOTP_RATE_LIMIT_PER_MIN: ClassVar[int] = 5    # TOTP attempts/min/account (SR-11)
     PIN_ATTEMPTS_PER_TXN: ClassVar[int] = 3       # PIN tries per transaction (SR-12)
     PIN_ATTEMPTS_PER_HOUR: ClassVar[int] = 5      # PIN tries/hour/account (SR-12)
-    EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 3  # email-change/unlock req/hr/account
+    EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 10  # email-change/reset/unlock req/hr/account
 
     # Argon2id parameters — password and PIN MUST differ (SR-01/SR-12).
     ARGON2_PASSWORD_TIME_COST: ClassVar[int] = 3
@@ -201,6 +203,9 @@ class Config:
             smtp_from=_require(env, "SMTP_FROM"),
             totp_issuer=_require(env, "TOTP_ISSUER"),
             force_https=_as_bool(_optional(env, "FORCE_HTTPS"), default=True),
+            frontend_base_url=(
+                _optional(env, "FRONTEND_BASE_URL") or "https://securebang.space"
+            ).rstrip("/"),
             cleanup_interval_seconds=_as_int(
                 _optional(env, "CLEANUP_INTERVAL_SECONDS"), default=3600,
                 name="CLEANUP_INTERVAL_SECONDS"),

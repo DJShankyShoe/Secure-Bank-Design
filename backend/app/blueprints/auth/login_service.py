@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import re
 import secrets
 import uuid
@@ -31,14 +32,20 @@ from ...extensions import db
 from ...models import MfaBackupCode, User
 from ...security import crypto, lockout
 from ...security.sessions import create_session, revoke_user_sessions
-from ...security.validation import ValidationError, validate_email, validate_password
+from ...security.validation import (
+    ValidationError,
+    validate_email,
+    validate_nric,
+    validate_password,
+)
 from ...services.audit import emit_audit
-from ...services.email import render_email, send_email
+from ...services.email import action_link, notify_user, render_email, send_email
 from .service import AuthServiceError, RateLimited
 
 _MFA_TOKEN_SALT = "mfa-pending-v1"
 _UNLOCK_TOKEN_SALT = "account-unlock-v1"
 _RESET_TOKEN_SALT = "password-reset-v1"
+_SIGNUP_EMAIL_SALT = "signup-email-verify-v1"
 _SIX_DIGITS = re.compile(r"^\d{6}$")
 
 # Pre-computed hash so an unknown-user login still spends ~one Argon2 verify,
@@ -49,6 +56,24 @@ _DUMMY_HASH = crypto.hash_password(secrets.token_hex(16))
 class InvalidCredentials(AuthServiceError):
     status = 401
     message = "Invalid credentials."
+
+
+class VerificationRequired(AuthServiceError):
+    """Correct password, but the account isn't fully verified yet (FR-01).
+
+    Raised only when the credentials are valid and the account is ``pending`` — so
+    the SPA can tell the user which step is missing (email and/or TOTP) instead of
+    a generic error. Carries the two flags. Only reachable with the right password,
+    so it doesn't help account enumeration.
+    """
+
+    status = 403
+    message = "Account not verified."
+
+    def __init__(self, *, email_verified: bool, totp_confirmed: bool):
+        super().__init__()
+        self.email_verified = email_verified
+        self.totp_confirmed = totp_confirmed
 
 
 class UnlockLinkInvalid(AuthServiceError):
@@ -64,6 +89,21 @@ class PasswordResetInvalid(AuthServiceError):
 class PasswordResetStepUpFailed(AuthServiceError):
     status = 401
     message = "Verification code is incorrect."
+
+
+class CurrentPasswordWrong(AuthServiceError):
+    status = 401
+    message = "Current password is incorrect."
+
+
+class SignupEmailInvalid(AuthServiceError):
+    status = 400
+    message = "Invalid or expired verification link."
+
+
+class NewPasswordSameAsOld(AuthServiceError):
+    status = 400
+    message = "New password must be different from the current one."
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -146,6 +186,12 @@ def login_password(*, email: str, password: str, source_ip: str) -> str:
             emit_audit("LOGIN", "failure", source_ip=source_ip,
                        actor_user_id=user.user_id, target_user_id=user.user_id,
                        action_detail={"step": "password", "reason": "not_active"})
+            # Password is correct: for a not-yet-verified (pending) account, tell the
+            # user what's missing so the SPA can prompt email/TOTP verification.
+            # Other non-active states (suspended/closed) stay generic.
+            if user.account_status == "pending":
+                raise VerificationRequired(email_verified=user.email_verified,
+                                           totp_confirmed=user.totp_confirmed)
             raise InvalidCredentials()
 
         session.commit()
@@ -239,10 +285,10 @@ def login_mfa(*, mfa_token: str, code: str, source_ip: str) -> str:
         lockout.reset_failed_auth(user)
         session_id = create_session(session, user.user_id, source_ip)
         session.commit()
+        uid = user.user_id
         emit_audit("LOGIN", "success", source_ip=source_ip,
                    actor_user_id=user.user_id, actor_role=user.role,
                    target_user_id=user.user_id, action_detail={"step": "mfa", "method": method})
-        return session_id
     except AuthServiceError:
         session.rollback()
         raise
@@ -251,6 +297,18 @@ def login_mfa(*, mfa_token: str, code: str, source_ip: str) -> str:
         raise
     finally:
         session.close()
+
+    # New-login notification (honours the notify_on_login preference). Best-effort:
+    # the session is already created, so a notify hiccup must never fail the login.
+    try:
+        when = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        notify_user(user_id=uid, pref_attr="notify_on_login",
+                    subject="New sign-in to your SecureBank account",
+                    body=render_email("login_notification.txt",
+                                      source_ip=source_ip, when=when))
+    except Exception:  # noqa: BLE001 - notification is non-critical
+        pass
+    return session_id
 
 
 def logout(*, session_id: str, source_ip: str) -> None:
@@ -323,7 +381,8 @@ def request_account_unlock(*, email: str, source_ip: str) -> None:
         send_email(
             to=target,
             subject="Unlock your SecureBank account",
-            body=render_email("unlock_account.txt", token=token),
+            body=render_email("unlock_account.txt",
+                              unlock_url=action_link("/unlock", token)),
         )
         emit_audit("ACCOUNT_UNLOCK_REQUEST", "success", source_ip=source_ip,
                    action_detail={"email": email})
@@ -386,17 +445,21 @@ def _read_reset_token(token: str) -> Optional[tuple[uuid.UUID, str]]:
         return None
 
 
-def request_password_reset(*, email: str, source_ip: str) -> None:
-    """Email a 30-min single-use reset link to a registered address (FR-09).
+def request_password_reset(*, email: str, nric: str, source_ip: str) -> None:
+    """Email a 30-min single-use reset link — only if email AND NRIC match (FR-09).
 
-    Generic by design (anti-enumeration, SR-09): a link is sent only when the
-    account exists and is resettable; otherwise nothing happens and the caller
-    still returns the same generic response. Per-account rate-limited via the
-    shared ``email`` attempt window. The token embeds a fingerprint of the current
-    password hash, so it self-invalidates once the password changes.
+    Identity is proven up front: a link is sent only when the account exists, is
+    resettable, and the supplied **NRIC matches the one on file** (constant-time).
+    Generic by design (anti-enumeration, SR-09): every path — unknown email, wrong
+    NRIC, malformed input, rate-limited — returns the same generic response and
+    sends nothing. Per-account rate-limited via the shared ``email`` window (the
+    attempt is recorded before the NRIC check so it also bounds NRIC guessing). The
+    token embeds a fingerprint of the current password hash → self-invalidates once
+    the password changes.
     """
     try:
         email = validate_email(email)
+        nric = validate_nric(nric)
     except ValidationError:
         return
 
@@ -409,10 +472,13 @@ def request_password_reset(*, email: str, source_ip: str) -> None:
             if not lockout.is_email_action_rate_limited(session, user.user_id):
                 lockout.record_auth_attempt(session, user.user_id, "email")
                 session.commit()
-                token = _reset_serializer().dumps(
-                    [_seal_uid(user.user_id), _reset_fingerprint(user.password_hash)]
-                )
-                target = user.email
+                stored_nric = crypto.aes_decrypt(
+                    user.nric_encrypted, _aes_key()).decode("utf-8")
+                if hmac.compare_digest(nric, stored_nric):
+                    token = _reset_serializer().dumps(
+                        [_seal_uid(user.user_id), _reset_fingerprint(user.password_hash)]
+                    )
+                    target = user.email
     finally:
         session.close()
 
@@ -420,10 +486,34 @@ def request_password_reset(*, email: str, source_ip: str) -> None:
         send_email(
             to=target,
             subject="Reset your SecureBank password",
-            body=render_email("password_reset.txt", token=token),
+            body=render_email("password_reset.txt",
+                              reset_url=action_link("/reset-password", token)),
         )
         emit_audit("PASSWORD_RESET_REQUEST", "success", source_ip=source_ip,
                    action_detail={"email": email})
+
+
+def check_reset_token(token: str) -> bool:
+    """Read-only validity check for a reset token (FR-09) — does NOT consume it.
+
+    True only when the token's signature is valid and unexpired AND the account
+    still exists, is resettable, and the password hasn't changed since the link was
+    issued (fingerprint still matches — i.e. the link is unused). Lets the SPA
+    render the reset form or an "expired link" message before the user fills
+    anything in. Returns only a boolean; reveals no account info.
+    """
+    parsed = _read_reset_token(token or "")
+    if parsed is None:
+        return False
+    user_id, fingerprint = parsed
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        if user is None or user.account_status not in _RESETTABLE_STATUSES:
+            return False
+        return _reset_fingerprint(user.password_hash) == fingerprint
+    finally:
+        session.close()
 
 
 def verify_password_reset(
@@ -432,13 +522,13 @@ def verify_password_reset(
     """Consume a reset token, verify a second factor, and set a new password
     (FR-09, SR-01/11/13).
 
-    Defence in depth: a valid reset link (email access) is **not** sufficient — the
-    caller must also supply a valid **TOTP code or one-time backup code** (step-up),
-    so email compromise alone cannot take over the account. TOTP attempts are
-    rate-limited 5/min (SR-11). On success the new password is re-validated against
-    the FR-01 policy, re-hashed with Argon2id, any lockout is cleared, and ALL of
-    the user's sessions are revoked so a stolen session cannot survive the reset
-    (SR-13). Single-use via the password-hash fingerprint. Generic errors.
+    Identity (email + NRIC) is already proven at the request step — the link is
+    only issued when both match — so here the caller just needs the link plus a
+    valid **TOTP code or one-time backup code** (step-up), rate-limited 5/min
+    (SR-11). On success the new password is re-validated against the FR-01 policy,
+    re-hashed with Argon2id, any lockout is cleared, and ALL of the user's sessions
+    are revoked so a stolen session cannot survive the reset (SR-13). Single-use via
+    the password-hash fingerprint. Generic errors.
     """
     parsed = _read_reset_token(token or "")
     if parsed is None:
@@ -488,6 +578,198 @@ def verify_password_reset(
         session.commit()
         emit_audit("PASSWORD_RESET", "success", source_ip=source_ip,
                    actor_user_id=user_id, target_user_id=user_id)
+    except AuthServiceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def change_password(*, user_id: uuid.UUID, current_password: str, new_password: str,
+                    current_session_id: str, source_ip: str) -> None:
+    """Change a logged-in user's password (FR-01, SR-01/13).
+
+    Re-verifies the **current** password, enforces the FR-01 policy on the new one,
+    re-hashes with Argon2id, and revokes the user's OTHER sessions (keeps the
+    caller's own device signed in). Audited.
+    """
+    new_password = validate_password(new_password)  # ValidationError -> 400
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        if user is None or not crypto.verify_password(
+            user.password_hash, current_password or ""
+        ):
+            emit_audit("PASSWORD_CHANGE", "failure", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "bad_current_password"})
+            raise CurrentPasswordWrong()
+        if crypto.verify_password(user.password_hash, new_password):
+            raise NewPasswordSameAsOld()
+
+        user.password_hash = crypto.hash_password(new_password)
+        revoke_user_sessions(session, user_id, except_session_id=current_session_id)
+        session.commit()
+    except AuthServiceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+    emit_audit("PASSWORD_CHANGE", "success", source_ip=source_ip,
+               actor_user_id=user_id, actor_role="customer", target_user_id=user_id)
+
+
+# --------------------------------------------------------------------------- #
+# Signup email verification (FR-01) — account is usable only once the email is
+# verified AND TOTP is confirmed (both flags true → account_status 'active').
+# --------------------------------------------------------------------------- #
+
+def _signup_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt=_SIGNUP_EMAIL_SALT)
+
+
+def send_signup_verification_email(*, user_id: uuid.UUID, email: str, source_ip: str) -> None:
+    """Email a 24-h signup verification link to a new registrant (FR-01)."""
+    token = _signup_serializer().dumps(_seal_uid(user_id))
+    send_email(
+        to=email,
+        subject="Verify your SecureBank email",
+        body=render_email("verify_signup_email.txt",
+                          verify_url=action_link("/verify-signup", token)),
+    )
+    emit_audit("SIGNUP_EMAIL_SENT", "success", source_ip=source_ip,
+               actor_user_id=user_id, target_user_id=user_id)
+
+
+def resend_signup_verification(*, email: str, source_ip: str) -> None:
+    """Re-send the signup verification link (FR-01) — for a stuck registrant.
+
+    Generic by design (anti-enumeration): always the same response; a link is sent
+    only when the account exists, is still ``pending`` with an unverified email, and
+    the per-account email rate-limit (shared ``email`` window) isn't exceeded.
+    """
+    try:
+        email = validate_email(email)
+    except ValidationError:
+        return
+
+    session = db.app_session()
+    target = None
+    uid = None
+    try:
+        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if (user is not None and user.account_status == "pending"
+                and not user.email_verified
+                and not lockout.is_email_action_rate_limited(session, user.user_id)):
+            lockout.record_auth_attempt(session, user.user_id, "email")
+            session.commit()
+            uid, target = user.user_id, user.email
+    finally:
+        session.close()
+
+    if target:
+        send_signup_verification_email(user_id=uid, email=target, source_ip=source_ip)
+
+
+def _read_signup_token(token: str) -> Optional[uuid.UUID]:
+    try:
+        sealed = _signup_serializer().loads(
+            token, max_age=int(Config.SIGNUP_EMAIL_TOKEN_TTL.total_seconds())
+        )
+        return _open_uid(sealed)
+    except (BadSignature, SignatureExpired, InvalidTag, ValueError, TypeError, AttributeError):
+        return None
+
+
+def verify_signup_email(*, token: str, source_ip: str) -> str:
+    """Consume a signup verification link → mark the email verified (FR-01).
+
+    Activates the account (``pending`` → ``active``) only if TOTP is also already
+    confirmed. Idempotent. Returns the resulting ``account_status`` so the SPA can
+    tell the user whether anything else (TOTP) is still pending.
+    """
+    user_id = _read_signup_token(token or "")
+    if user_id is None:
+        raise SignupEmailInvalid()
+
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        if user is None:
+            raise SignupEmailInvalid()
+        if not user.email_verified:
+            user.email_verified = True
+            if user.totp_confirmed and user.account_status == "pending":
+                user.account_status = "active"
+            session.commit()
+            emit_audit("SIGNUP_EMAIL_VERIFY", "success", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id)
+        status = user.account_status
+    except AuthServiceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+    return status
+
+
+def reissue_totp_provisioning(*, email: str, password: str, source_ip: str) -> str:
+    """Re-issue the TOTP provisioning URI for a user who never finished setup (FR-01).
+
+    For a registrant who closed the QR screen before scanning it. Requires the
+    correct password (failures count toward the SR-09 lockout) and only works while
+    the account is still ``pending`` with TOTP **not yet confirmed** — once TOTP is
+    confirmed the seed is never re-exposed. Returns the SAME seed's provisioning URI
+    (no seed rotation). Generic errors (anti-enumeration).
+    """
+    try:
+        email = validate_email(email)
+    except ValidationError:
+        crypto.verify_password(_DUMMY_HASH, password or "")  # constant-ish timing
+        raise InvalidCredentials() from None
+
+    session = db.app_session()
+    try:
+        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if user is None:
+            crypto.verify_password(_DUMMY_HASH, password or "")
+            raise InvalidCredentials()
+
+        lockout.clear_expired_lock(user)
+        if lockout.is_account_locked(user):
+            session.commit()
+            raise InvalidCredentials()
+        if not crypto.verify_password(user.password_hash, password or ""):
+            lockout.register_failed_auth(user)
+            session.commit()
+            emit_audit("TOTP_REPROVISION", "failure", source_ip=source_ip,
+                       actor_user_id=user.user_id, target_user_id=user.user_id,
+                       action_detail={"reason": "bad_password"})
+            raise InvalidCredentials()
+
+        # Only for a pending account whose TOTP isn't confirmed yet — never re-expose
+        # the seed of a set-up account.
+        if user.account_status != "pending" or user.totp_confirmed:
+            session.commit()
+            raise InvalidCredentials()
+
+        seed = crypto.aes_decrypt(user.totp_seed_encrypted, _aes_key()).decode("utf-8")
+        issuer = current_app.extensions["securebank_config"].totp_issuer
+        uri = pyotp.TOTP(seed).provisioning_uri(name=user.email, issuer_name=issuer)
+        lockout.reset_failed_auth(user)
+        session.commit()
+        emit_audit("TOTP_REPROVISION", "success", source_ip=source_ip,
+                   actor_user_id=user.user_id, target_user_id=user.user_id)
+        return uri
     except AuthServiceError:
         session.rollback()
         raise

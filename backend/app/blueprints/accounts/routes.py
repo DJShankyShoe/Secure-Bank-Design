@@ -14,12 +14,14 @@ from ...services.audit import client_ip
 from . import bp
 from .service import (
     AccountActionError,
-    close_account,
     create_account,
     get_account,
     get_account_transactions,
+    get_contact_preferences,
     list_accounts,
+    request_account_closure,
     serialize_account,
+    update_contact_preferences,
 )
 
 
@@ -112,6 +114,33 @@ def list_own():
     return jsonify(accounts=list_accounts(user_id=g.user_id)), 200
 
 
+@bp.get("/preferences")
+@require_authenticated
+def get_preferences():
+    """Return the current user's notification preferences (FR-04)."""
+    return jsonify(get_contact_preferences(user_id=g.user_id)), 200
+
+
+@bp.put("/preferences")
+@require_authenticated
+def put_preferences():
+    """Update notification preferences (FR-04).
+
+    Body: ``notify_on_transfer`` and/or ``notify_on_login`` (booleans; partial
+    update — omitted fields are unchanged). Returns the updated preferences.
+    """
+    body = _json()
+    try:
+        prefs = update_contact_preferences(
+            user_id=g.user_id,
+            notify_on_transfer=body.get("notify_on_transfer"),
+            notify_on_login=body.get("notify_on_login"),
+        )
+    except ValidationError as exc:
+        return jsonify(error=exc.message), 400
+    return jsonify(prefs), 200
+
+
 @bp.get("/<account_id>")
 @require_authenticated
 def view(account_id: str):
@@ -155,10 +184,12 @@ def history(account_id: str):
 @bp.post("/<account_id>/close")
 @require_authenticated
 def close(account_id: str):
-    """Close one of the user's accounts (FR-05).
+    """Request closure of one of the user's accounts (FR-05).
 
-    Body: ``totp_code``. Requires a zero balance and a fresh TOTP step-up.
-    Returns 200 with the closed account; 404 if not owned (IDOR).
+    Body: ``totp_code``. Requires a zero balance and a fresh TOTP step-up. This does
+    NOT close the account immediately — it moves it to ``close_requested`` (which
+    freezes transfers) pending an admin approve/reject. Returns 200 with the account
+    (``status: close_requested``); 404 if not owned (IDOR).
     """
     try:
         parsed = uuid.UUID(account_id)
@@ -171,8 +202,9 @@ def close(account_id: str):
 
     body = _json()
     try:
-        result = close_account(user_id=g.user_id, account_id=parsed,
-                               totp_code=body.get("totp_code", ""), source_ip=client_ip())
+        result = request_account_closure(user_id=g.user_id, account_id=parsed,
+                                         totp_code=body.get("totp_code", ""),
+                                         source_ip=client_ip())
     except ValidationError as exc:
         return jsonify(error=exc.message), 400
     except AccountActionError as exc:

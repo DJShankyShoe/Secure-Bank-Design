@@ -10,6 +10,7 @@ import pytest
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.4"
@@ -36,6 +37,7 @@ def _logged_in_client(app):
                                 password=password, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: verify signup email
         token = login_password(email=email, password=password, source_ip=_IP)
     client = app.test_client()
     client.post("/auth/login/mfa", json={"mfa_token": token, "code": pyotp.TOTP(secret).now()},
@@ -51,7 +53,8 @@ def test_create_account_201(require_db, acc_app):
     assert len(body["account_number"]) == 10 and body["account_number"].isdigit()
     assert body["balance_cents"] == 0
     assert body["account_type"] == "savings"
-    assert body["status"] == "active"
+    # New accounts start frozen, awaiting admin approval (FR-02).
+    assert body["status"] == "open_requested"
 
 
 def test_create_account_invalid_type_400(require_db, acc_app):
@@ -121,3 +124,25 @@ def test_create_account_emits_audit(require_db, acc_app):
             {"a": acc_id},
         ).scalar_one()
     assert n == 1
+
+
+def test_notification_preferences_get_update(require_db, acc_app):
+    c = _logged_in_client(acc_app)
+    # Defaults: both on.
+    assert c.get("/accounts/preferences", base_url=_HTTPS).get_json() == {
+        "notify_on_transfer": True, "notify_on_login": True}
+    # Partial update leaves the other field unchanged.
+    r = c.put("/accounts/preferences", json={"notify_on_transfer": False}, base_url=_HTTPS)
+    assert r.status_code == 200
+    assert r.get_json() == {"notify_on_transfer": False, "notify_on_login": True}
+    # Persisted.
+    assert c.get("/accounts/preferences",
+                 base_url=_HTTPS).get_json()["notify_on_transfer"] is False
+    # Non-boolean -> 400.
+    assert c.put("/accounts/preferences", json={"notify_on_login": "yes"},
+                 base_url=_HTTPS).status_code == 400
+
+
+def test_preferences_requires_auth_401(require_db, acc_app):
+    assert acc_app.test_client().get("/accounts/preferences",
+                                     base_url=_HTTPS).status_code == 401

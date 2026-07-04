@@ -110,6 +110,20 @@ def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_i
                actor_user_id=user_id, actor_role="customer", target_user_id=user_id)
 
 
+def is_transaction_pin_set(*, user_id: uuid.UUID) -> bool:
+    """Return True if the user has a transaction PIN set (SR-12).
+
+    Exposes only a boolean — never the PIN or its hash — so the SPA can decide
+    whether to prompt for PIN setup / show the PIN field on high-value transfers.
+    """
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        return user is not None and user.transaction_pin_hash is not None
+    finally:
+        session.close()
+
+
 def _verify_pin_for_transfer(*, user_id: uuid.UUID, pin: str, txn_ref: str, source_ip: str) -> None:
     """Verify the PIN for a high-value transfer with attempt limits (SR-12).
 

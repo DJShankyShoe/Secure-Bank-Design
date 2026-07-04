@@ -28,6 +28,8 @@ def _secret(uri: str) -> str:
 
 
 def _register_and_activate(app) -> dict:
+    from conftest import activate_signup_email
+
     email, password = _email(), "Str0ng!Passw0rd"
     with app.app_context():
         res = register_customer(
@@ -36,6 +38,7 @@ def _register_and_activate(app) -> dict:
         )
         secret = _secret(res.provisioning_uri)
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: email must also be verified
     return {"email": email, "password": password, "secret": secret,
             "user_id": res.user_id, "backup_codes": res.backup_codes}
 
@@ -71,14 +74,28 @@ def test_login_unknown_user_same_generic_error(require_db, app):
     assert e1.value.status == e2.value.status == 401
 
 
-def test_login_pending_account_rejected(require_db, app):
-    # Registered but not TOTP-confirmed -> not active -> generic failure.
+def test_login_pending_account_signals_verification_required(require_db, app):
+    # Registered but not verified (pending) + correct password -> VerificationRequired
+    # carrying the two flags, so the SPA can prompt the missing step(s).
+    from app.blueprints.auth.login_service import VerificationRequired
+
     email, password = _email(), "Str0ng!Passw0rd"
     with app.app_context():
         register_customer(full_name="Pending P", nric="S1234567D", email=email,
                           password=password, source_ip=_IP)
-        with pytest.raises(InvalidCredentials):
+        with pytest.raises(VerificationRequired) as e:
             login_password(email=email, password=password, source_ip=_IP)
+    assert e.value.email_verified is False and e.value.totp_confirmed is False
+
+
+def test_login_pending_wrong_password_still_generic(require_db, app):
+    # Wrong password on a pending account stays generic (no info leak).
+    email = _email()
+    with app.app_context():
+        register_customer(full_name="Pending Q", nric="S1234567D", email=email,
+                          password="Str0ng!Passw0rd", source_ip=_IP)
+        with pytest.raises(InvalidCredentials):
+            login_password(email=email, password="WrongPass123!", source_ip=_IP)
 
 
 # --------------------------------------------------------------------------- #
@@ -220,3 +237,59 @@ def test_mfa_token_does_not_expose_user_id(require_db, app):
         assert uid.hex not in decoded
         # still round-trips back to the real uid
         assert read_mfa_token(token) == uid
+
+
+# --------------------------------------------------------------------------- #
+# Change password (authenticated)
+# --------------------------------------------------------------------------- #
+
+def test_change_password(require_db, api_client, app):
+    u = _register_and_activate(app)
+    r1 = api_client.post("/auth/login",
+                         json={"email": u["email"], "password": u["password"]}, headers=_HTTPS)
+    mfa = r1.get_json()["mfa_token"]
+    api_client.post("/auth/login/mfa",
+                    json={"mfa_token": mfa, "code": pyotp.TOTP(u["secret"]).now()}, headers=_HTTPS)
+
+    new_pw = "N3w!Str0ngPassw0rd"
+    r = api_client.post("/auth/password/change",
+                        json={"current_password": u["password"], "new_password": new_pw},
+                        headers=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["status"] == "password_changed"
+
+    with app.app_context():
+        assert isinstance(login_password(email=u["email"], password=new_pw, source_ip=_IP), str)
+        with pytest.raises(InvalidCredentials):
+            login_password(email=u["email"], password=u["password"], source_ip=_IP)
+
+
+def test_login_notification_respects_preference(require_db, app):
+    from app.blueprints.accounts.service import update_contact_preferences
+
+    u = _register_and_activate(app)
+    with app.app_context():
+        outbox = app.extensions.setdefault("email_outbox", [])
+        # Default (notify_on_login on) -> a sign-in notification is sent.
+        outbox.clear()
+        t = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        login_mfa(mfa_token=t, code=pyotp.TOTP(u["secret"]).now(), source_ip=_IP)
+        assert any("sign-in" in m["body"] for m in outbox if m["to"] == u["email"])
+        # Turn it off -> no notification on the next login.
+        update_contact_preferences(user_id=u["user_id"], notify_on_login=False)
+        outbox.clear()
+        t2 = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        login_mfa(mfa_token=t2, code=pyotp.TOTP(u["secret"]).now(), source_ip=_IP)
+        assert not any("sign-in" in m["body"] for m in outbox if m["to"] == u["email"])
+
+
+def test_change_password_wrong_current_401(require_db, api_client, app):
+    u = _register_and_activate(app)
+    r1 = api_client.post("/auth/login",
+                         json={"email": u["email"], "password": u["password"]}, headers=_HTTPS)
+    mfa = r1.get_json()["mfa_token"]
+    api_client.post("/auth/login/mfa",
+                    json={"mfa_token": mfa, "code": pyotp.TOTP(u["secret"]).now()}, headers=_HTTPS)
+    r = api_client.post("/auth/password/change",
+                        json={"current_password": "WrongPass123!", "new_password": "An0ther!Passw0rd"},
+                        headers=_HTTPS)
+    assert r.status_code == 401

@@ -21,11 +21,13 @@ from app.blueprints.auth.login_service import (
     login_password,
 )
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.21"
 _PW = "Str0ng!Passw0rd"
 _NEW_PW = "N3w!Str0ngPassw0rd"
+_NRIC = "S1234567D"   # the NRIC every test user registers with
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +50,7 @@ def _register_active(app) -> dict:
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: verify signup email
     return {"email": email, "secret": secret, "user_id": res.user_id,
             "backup_codes": res.backup_codes}
 
@@ -72,19 +75,22 @@ def _to(app, address):
 
 
 def _token_from(body: str) -> str:
-    return body.split("token: ")[1].split("\n")[0].strip()
+    # token now lives inside a clickable link: .../reset-password?token=<tok>
+    return body.split("token=")[1].split()[0].strip()
 
 
-def _request_token(app, c, email) -> str:
+def _request_token(app, c, email, nric=_NRIC) -> str:
     _outbox(app).clear()
-    r = c.post("/auth/password/reset/request", json={"email": email}, base_url=_HTTPS)
+    r = c.post("/auth/password/reset/request",
+               json={"email": email, "nric": nric}, base_url=_HTTPS)
     assert r.status_code == 200
     return _token_from(_to(app, email)[0]["body"])
 
 
 def _verify(c, token, new_password, totp_code):
     return c.post("/auth/password/reset/verify",
-                  json={"token": token, "new_password": new_password, "totp_code": totp_code},
+                  json={"token": token, "new_password": new_password,
+                        "totp_code": totp_code},
                   base_url=_HTTPS)
 
 
@@ -113,6 +119,18 @@ def test_reset_requires_valid_second_factor(require_db, reset_app):
     assert _verify(c, token, _NEW_PW, "000000").status_code == 401
     with reset_app.app_context():
         assert isinstance(login_password(email=u["email"], password=_PW, source_ip=_IP), str)
+
+
+def test_request_with_wrong_nric_sends_nothing(require_db, reset_app):
+    # A link is issued only when email AND NRIC match; wrong NRIC -> generic 200,
+    # no email (so it can't be used to enumerate accounts either).
+    u = _register_active(reset_app)
+    c = reset_app.test_client()
+    _outbox(reset_app).clear()
+    r = c.post("/auth/password/reset/request",
+               json={"email": u["email"], "nric": "S9999999Z"}, base_url=_HTTPS)
+    assert r.status_code == 200
+    assert _to(reset_app, u["email"]) == []   # correct email but wrong NRIC -> silent
 
 
 def test_reset_accepts_backup_code_as_second_factor(require_db, reset_app):
@@ -178,6 +196,22 @@ def test_verify_bad_token_400(require_db, reset_app):
     assert _verify(c, "garbage", _NEW_PW, "123456").status_code == 400
 
 
+def test_reset_check_token(require_db, reset_app):
+    u = _register_active(reset_app)
+    c = reset_app.test_client()
+    token = _request_token(reset_app, c, u["email"])
+
+    def _valid(tok):
+        return c.get(f"/auth/password/reset/check?token={tok}",
+                     base_url=_HTTPS).get_json()["valid"]
+
+    assert _valid(token) is True          # fresh token is valid
+    assert _valid("garbage") is False     # junk token is not
+    # after the reset consumes it, the same token is no longer valid (single-use)
+    assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
+    assert _valid(token) is False
+
+
 def test_request_is_rate_limited(require_db, reset_app):
     from app.config import Config
 
@@ -186,7 +220,8 @@ def test_request_is_rate_limited(require_db, reset_app):
     _outbox(reset_app).clear()
     for _ in range(Config.EMAIL_ACTION_LIMIT_PER_HOUR + 2):
         assert c.post("/auth/password/reset/request",
-                      json={"email": u["email"]}, base_url=_HTTPS).status_code == 200
+                      json={"email": u["email"], "nric": _NRIC},
+                      base_url=_HTTPS).status_code == 200
     assert len(_to(reset_app, u["email"])) == Config.EMAIL_ACTION_LIMIT_PER_HOUR
 
 

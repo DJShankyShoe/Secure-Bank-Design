@@ -44,6 +44,7 @@ DB_NAME="${DB_NAME:-securebank}"
 APP_DB_HOST="${APP_DB_HOST:-${PGHOST:-localhost}}"
 APP_DB_PORT="${APP_DB_PORT:-${PGPORT:-5432}}"
 FORCE_HTTPS="${FORCE_HTTPS:-true}"
+FRONTEND_BASE_URL="${FRONTEND_BASE_URL:-https://securebang.space}"
 SMTP_PORT="${SMTP_PORT:-587}"
 RECREATE_DB="${RECREATE_DB:-0}"
 ENV_FILE="${ENV_FILE:-$BACKEND_DIR/.env}"
@@ -119,7 +120,11 @@ SMTP_FROM=${SMTP_FROM}
 TOTP_ISSUER=${TOTP_ISSUER}
 FORCE_HTTPS=${FORCE_HTTPS}
 
-# In-app periodic cleanup (§9.2); advisory-lock-gated so it's multi-container safe.
+# Public SPA origin used to build clickable links in verification/reset/unlock
+# emails (e.g. <base>/reset-password?token=...).
+FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
+
+# In-app periodic cleanup; advisory-lock-gated so it's multi-container safe.
 # Set 0 to disable and use cron (flask --app app cleanup) instead.
 CLEANUP_INTERVAL_SECONDS=${CLEANUP_INTERVAL_SECONDS:-3600}
 EOF

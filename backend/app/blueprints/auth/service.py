@@ -148,12 +148,18 @@ def register_customer(
         action_detail={"email": email, "nric_masked": mask_nric(nric)},
     )
 
+    # Email a signup verification link — the account activates only once BOTH the
+    # email is verified and TOTP is confirmed (FR-01). Local import avoids a
+    # circular import (login_service imports this module).
+    from .login_service import send_signup_verification_email
+    send_signup_verification_email(user_id=user_id, email=email, source_ip=source_ip)
+
     provisioning_uri = pyotp.TOTP(seed).provisioning_uri(name=email, issuer_name=_issuer())
     return RegistrationResult(user_id=user_id, provisioning_uri=provisioning_uri,
                               backup_codes=plaintext_codes)
 
 
-def confirm_totp_enrolment(*, email: str, code: str, source_ip: str) -> None:
+def confirm_totp_enrolment(*, email: str, code: str, source_ip: str) -> str:
     """Verify a TOTP code for a pending account and activate it (FR-01, SR-11).
 
     Enforces the 5/min/account TOTP limit, counts failures toward the SR-09
@@ -189,9 +195,14 @@ def confirm_totp_enrolment(*, email: str, code: str, source_ip: str) -> None:
                        actor_user_id=user.user_id, target_user_id=user.user_id)
             raise EnrolmentError()
 
-        user.account_status = "active"
+        user.totp_confirmed = True
+        # Activate only when the signup email is ALSO verified (FR-01); otherwise
+        # the account stays 'pending' until the email link is used.
+        if user.email_verified:
+            user.account_status = "active"
         lockout.reset_failed_auth(user)
         session.commit()
+        status = user.account_status
         emit_audit("MFA_ENROL_VERIFY", "success", source_ip=source_ip,
                    actor_user_id=user.user_id, actor_role=user.role,
                    target_user_id=user.user_id)
@@ -203,3 +214,4 @@ def confirm_totp_enrolment(*, email: str, code: str, source_ip: str) -> None:
         raise
     finally:
         session.close()
+    return status

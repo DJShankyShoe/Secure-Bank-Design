@@ -10,6 +10,7 @@ import pytest
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
+from conftest import activate_signup_email, approve_account
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.6"
@@ -37,6 +38,7 @@ def _setup_user(app):
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
+        activate_signup_email(app, email)  # FR-01: verify signup email
         token = login_password(email=email, password=_PW, source_ip=_IP)
     client = app.test_client()
     client.post("/auth/login/mfa", json={"mfa_token": token, "code": pyotp.TOTP(secret).now()},
@@ -45,8 +47,10 @@ def _setup_user(app):
 
 
 def _create_account(client, account_type="savings") -> dict:
-    return client.post("/accounts", json={"account_type": account_type},
-                       base_url=_HTTPS).get_json()
+    acc = client.post("/accounts", json={"account_type": account_type},
+                      base_url=_HTTPS).get_json()
+    approve_account(acc["account_id"])  # FR-02: new accounts need admin approval
+    return acc
 
 
 def _fund(app, account_id: str, cents: int) -> None:
@@ -89,6 +93,13 @@ def test_set_pin_success_and_wrong_password(require_db, txn_app):
     assert _set_pin(c).status_code == 200
     r = c.post("/transactions/pin", json={"password": "nope", "pin": _PIN}, base_url=_HTTPS)
     assert r.status_code == 401
+
+
+def test_pin_status_reflects_whether_set(require_db, txn_app):
+    c, _ = _setup_user(txn_app)
+    assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is False
+    _set_pin(c)
+    assert c.get("/transactions/pin", base_url=_HTTPS).get_json()["pin_set"] is True
 
 
 def test_transfer_below_threshold_moves_money(require_db, txn_app):

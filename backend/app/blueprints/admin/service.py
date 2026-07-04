@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from flask import current_app
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from ...extensions import db
 from ...models import Account, AuditEvent, SessionRecord, User
@@ -59,11 +59,19 @@ def _validate_reason(raw: str) -> str:
 # Read views
 # --------------------------------------------------------------------------- #
 
-def list_users() -> list[dict[str, Any]]:
-    """List all users with masked NRIC (admin view, FR-08)."""
+def list_users(search: Optional[str] = None) -> list[dict[str, Any]]:
+    """List users with masked NRIC (admin view, FR-08).
+
+    Optional ``search`` filters by a case-insensitive partial match on email or
+    full name (parameterised ILIKE — no raw SQL, SR-04).
+    """
     session = db.app_session()
     try:
-        rows = session.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+        stmt = select(User).order_by(User.created_at.desc())
+        if search and search.strip():
+            like = f"%{search.strip()}%"
+            stmt = stmt.where(or_(User.email.ilike(like), User.full_name.ilike(like)))
+        rows = session.execute(stmt).scalars().all()
         return [{
             "user_id": str(u.user_id),
             "email": u.email,
@@ -94,14 +102,41 @@ def list_all_accounts() -> list[dict[str, Any]]:
         session.close()
 
 
-def read_audit_log(*, page: int = 1, event_type: Optional[str] = None) -> dict[str, Any]:
-    """Read the audit log via the SELECT-only admin_reader engine (FR-08, SR-14)."""
+def list_user_accounts(*, user_id: uuid.UUID) -> list[dict[str, Any]]:
+    """List one user's accounts for the admin user-directory drill-down (FR-08)."""
+    session = db.app_session()
+    try:
+        rows = session.execute(
+            select(Account).where(Account.user_id == user_id)
+            .order_by(Account.created_at.desc())
+        ).scalars().all()
+        return [{
+            "account_id": str(a.account_id),
+            "account_number": a.account_number,
+            "account_type": a.account_type,
+            "balance_cents": a.balance_cents,
+            "status": a.status,
+        } for a in rows]
+    finally:
+        session.close()
+
+
+def read_audit_log(*, page: int = 1, event_type: Optional[str] = None,
+                   user_id: Optional[uuid.UUID] = None) -> dict[str, Any]:
+    """Read the audit log via the SELECT-only admin_reader engine (FR-08, SR-14).
+
+    Optional filters: ``event_type`` (exact action type) and ``user_id`` (every
+    event where the user is the actor **or** the target). Both compose.
+    """
     page = max(page, 1)
     reader = db.admin_reader_session()
     try:
         stmt = select(AuditEvent)
         if event_type:
             stmt = stmt.where(AuditEvent.event_type == event_type)
+        if user_id is not None:
+            stmt = stmt.where(or_(AuditEvent.actor_user_id == user_id,
+                                  AuditEvent.target_user_id == user_id))
         stmt = (stmt.order_by(AuditEvent.event_timestamp.desc())
                 .limit(_AUDIT_PAGE_SIZE).offset((page - 1) * _AUDIT_PAGE_SIZE))
         rows = reader.execute(stmt).scalars().all()
@@ -192,6 +227,165 @@ def admin_close_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: s
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
     return {"account_id": str(account_id), "status": "closed"}
+
+
+def approve_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID,
+                            source_ip: str) -> dict[str, Any]:
+    """Approve a pending customer closure request -> close the account (FR-05/08).
+
+    Only acts on an account in ``close_requested``; re-checks the zero-balance
+    invariant under a row lock. Audited with the admin as actor.
+    """
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "close_requested":
+            raise TargetNotFound()
+        if account.balance_cents != 0:
+            session.rollback()
+            emit_audit("ADMIN_CLOSURE_APPROVE", "failure", source_ip=source_ip,
+                       actor_user_id=admin_id, actor_role="admin",
+                       target_user_id=account.user_id,
+                       action_detail={"fail": "non_zero_balance",
+                                      "account_id": str(account_id)})
+            raise CannotClose()
+        owner = account.user_id
+        account.status = "closed"
+        account.closed_at = _now()
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_CLOSURE_APPROVE", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "closed"}
+
+
+def reject_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
+                           source_ip: str) -> dict[str, Any]:
+    """Reject a pending customer closure request -> reactivate the account (FR-05/08).
+
+    Only acts on an account in ``close_requested``. The reason is required and
+    logged. Audited with the admin as actor.
+    """
+    reason = _validate_reason(reason)
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "close_requested":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "active"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_CLOSURE_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "active"}
+
+
+def approve_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID,
+                            source_ip: str) -> dict[str, Any]:
+    """Approve a new account opening request -> activate it (FR-02/08).
+
+    Only acts on an account in ``open_requested``. Audited with the admin as actor.
+    """
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "open_requested":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "active"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_OPEN_APPROVE", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "active"}
+
+
+def reject_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
+                           source_ip: str) -> dict[str, Any]:
+    """Reject a new account opening request -> close it (FR-02/08). Reason logged.
+
+    Only acts on an account in ``open_requested`` (never activated), which becomes
+    ``closed``. Audited with the admin as actor.
+    """
+    reason = _validate_reason(reason)
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "open_requested":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "closed"
+        account.closed_at = _now()
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_OPEN_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "closed"}
+
+
+def suspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
+                    source_ip: str) -> dict[str, Any]:
+    """Freeze a single account (admin, FR-08). Reversible; reason logged.
+
+    Only an ``active`` account can be suspended. A ``suspended`` account is frozen
+    for transfers (the money path requires ``status=='active'``) but the owner can
+    still log in and use their other accounts.
+    """
+    reason = _validate_reason(reason)
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "active":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "suspended"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_SUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"reason": reason, "account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "suspended"}
+
+
+def unsuspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID,
+                      source_ip: str) -> dict[str, Any]:
+    """Lift a suspension on an account -> ``active`` (admin, FR-08)."""
+    session = db.app_session()
+    try:
+        account = session.execute(
+            select(Account).where(Account.account_id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if account is None or account.status != "suspended":
+            raise TargetNotFound()
+        owner = account.user_id
+        account.status = "active"
+        session.commit()
+    finally:
+        session.close()
+    emit_audit("ADMIN_UNSUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
+               actor_role="admin", target_user_id=owner,
+               action_detail={"account_id": str(account_id)})
+    return {"account_id": str(account_id), "status": "active"}
 
 
 def reveal_nric(*, admin_id: uuid.UUID, target_user_id: uuid.UUID,

@@ -8,7 +8,8 @@
 CREATE TABLE application.users (
   user_id               uuid PRIMARY KEY,
   email                 varchar(254) UNIQUE NOT NULL,            -- RFC 5322; lowercased on write
-  email_verified        boolean      NOT NULL DEFAULT FALSE,
+  email_verified        boolean      NOT NULL DEFAULT FALSE,      -- signup email confirmed (FR-01)
+  totp_confirmed        boolean      NOT NULL DEFAULT FALSE,      -- TOTP enrolment confirmed; account active only when BOTH true (FR-01)
   full_name             varchar(120) NOT NULL,
   nric_encrypted        bytea        NOT NULL,                   -- AES-256-GCM (SR-03)
   nric_masked           varchar(9)   NOT NULL,                   -- e.g. T****518H
@@ -45,7 +46,7 @@ CREATE TABLE application.accounts (
   account_type    varchar(16) NOT NULL CHECK (account_type IN ('savings','current')),
   balance_cents   bigint      NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
   status          varchar(16) NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active','closed')),               -- close requires balance 0 (FR-05)
+                    CHECK (status IN ('open_requested','active','suspended','close_requested','closed')),  -- open_requested=new, awaiting admin approval (FR-02); suspended=admin freeze (FR-08); close_requested=customer request→admin approve (FR-05)
   created_at      timestamptz NOT NULL DEFAULT NOW(),
   updated_at      timestamptz NOT NULL DEFAULT NOW(),
   closed_at       timestamptz
