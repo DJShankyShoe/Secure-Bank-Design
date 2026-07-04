@@ -4,42 +4,63 @@ import { api } from "../../api/api";
 
 export default function Login({ onLoginSuccess }) {
   const navigate = useNavigate();
-  const [showMfa, setShowMfa] = useState(false);
-  const [credentials, setCredentials] = useState({
-    email: '',
-    password: ''
-  });
-
-  const [totp, setTotp] = useState('');
+  
+  // UI State
+  const [authStep, setAuthStep] = useState('credentials'); // 'credentials' or 'mfa'
+  const [error, setError] = useState('');
+  
+  // Data State
+  const [credentials, setCredentials] = useState({ email: '', password: '' });
+  const [securityCode, setSecurityCode] = useState('');
   const [mfaToken, setMfaToken] = useState('');
 
   const handlePrimaryAction = async (e) => {
-  e.preventDefault();
+    e.preventDefault();
+    setError('');
 
-  try {
-    if (!showMfa) {
-      const response = await api.login(
-        credentials.email,
-        credentials.password
-      );
+    if (authStep === 'credentials') {
+      // --- STAGE 1: CREDENTIAL VERIFICATION ---
+      try {
+        const response = await api.login(credentials.email, credentials.password);
+        
+        // If login succeeds and requires a second step, the backend gives us an MFA token
+        setMfaToken(response.mfa_token);
+        setAuthStep('mfa');
 
-      setMfaToken(response.mfa_token);
-      setShowMfa(true);
+      } catch (err) {
+        // --- SOFT 403 HANDLING (The Traffic Cop Integration) ---
+        // If the backend throws an error but it's specifically our verification prompt...
+        if (err.status === 403 && err.data && err.data.status === "verification_required") {
+          // Send the user to App.jsx, which will redirect them to Verify Email or Setup PIN
+          onLoginSuccess({
+            role: 'customer', // Defaulting to customer for onboarding
+            emailVerified: err.data.email_verified,
+            totpConfirmed: err.data.totp_confirmed
+          });
+          return;
+        }
+
+        // Otherwise, it's a real error (e.g., wrong password)
+        setError(err.message || 'Invalid Email or Password. Please try again.');
+      }
 
     } else {
+      // --- STAGE 2: MFA / PIN VERIFICATION ---
+      try {
+        await api.verifyMfa(mfaToken, securityCode);
+        
+        // If MFA succeeds, they are fully verified!
+        onLoginSuccess({
+          role: 'customer', // Assuming default customer, adjust if backend returns role
+          emailVerified: true,
+          totpConfirmed: true
+        });
 
-      await api.verifyMfa(
-        mfaToken,
-        totp
-      );
-
-      onLoginSuccess();
+      } catch (err) {
+        setError(err.message || 'Invalid security code. Please try again.');
+      }
     }
-
-  } catch (err) {
-    alert(err.message);
-  }
-};
+  };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -67,30 +88,6 @@ export default function Login({ onLoginSuccess }) {
           <p style={{ fontSize: '1.2rem', color: '#D1D5DB', maxWidth: '480px', lineHeight: '1.6', marginBottom: '48px' }}>
             Experience next-generation digital banking protected by layered security controls. Manage your wealth with absolute confidence.
           </p>
-
-          {/* TEMPORARY DEV BOX FOR MOCK CREDENTIALS */}
-          <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderLeft: '4px solid #3B82F6', padding: '24px', borderRadius: '0 8px 8px 0', maxWidth: '500px', backdropFilter: 'blur(8px)' }}>
-            <h3 style={{ color: '#93C5FD', fontSize: '1.05rem', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
-              🛠️ Developer Testing Credentials
-            </h3>
-            <div style={{ color: '#E5E7EB', fontSize: '0.95rem', margin: 0, lineHeight: '1.6' }}>
-              <strong>1. Existing Customer (Has PIN):</strong><br/>
-              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>T1234567A</code><br/>
-              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
-              <div style={{ margin: '8px 0', borderTop: '1px solid #1E40AF' }}></div>
-              
-              <strong>2. New Customer (Soft 403 test):</strong><br/>
-              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>NEWUSER</code><br/>
-              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>password123</code>
-              <div style={{ margin: '8px 0', borderTop: '1px solid #1E40AF' }}></div>
-              
-              <strong>3. Admin View:</strong><br/>
-              ID: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>ADMIN99</code><br/>
-              Pass: <code style={{ backgroundColor: '#1E3A8A', padding: '2px 6px', borderRadius: '4px' }}>admin123</code>
-              
-              <p style={{ marginTop: '12px', fontSize: '0.85rem', color: '#93C5FD' }}>* For accounts that require a 2nd step, enter any 6 digits.</p>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -105,16 +102,11 @@ export default function Login({ onLoginSuccess }) {
               End-to-End Encrypted
             </div>
             
-            {/* Dynamic Headers based on user type */}
             <h2 style={{ fontSize: '2rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>
-              {authStep === 'customer-pin' && "Security PIN"}
-              {authStep === 'admin-mfa' && "Staff Authentication"}
-              {authStep === 'credentials' && "Welcome Back"}
+              {authStep === 'mfa' ? "Security Verification" : "Welcome Back"}
             </h2>
             <p style={{ color: '#4B5563', fontSize: '1.05rem', margin: 0 }}>
-              {authStep === 'customer-pin' && "Please enter your 6-digit transaction PIN to confirm your identity."}
-              {authStep === 'admin-mfa' && "Enter the 6-digit code generated by your corporate authenticator app."}
-              {authStep === 'credentials' && "Please enter your credentials to securely access your accounts."}
+              {authStep === 'mfa' ? "Please enter your 6-digit transaction PIN to confirm your identity." : "Please enter your credentials to securely access your accounts."}
             </p>
           </div>
 
@@ -132,15 +124,11 @@ export default function Login({ onLoginSuccess }) {
                   <label htmlFor="email" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Email Address</label>
                   <input 
                     id="email"
-                    type="text" 
+                    type="email" 
                     required
+                    placeholder="name@example.com"
                     value={credentials.email}
-                    onChange={(e) =>
-                      setCredentials({
-                        ...credentials,
-                        email: e.target.value
-                      })
-                    }
+                    onChange={(e) => setCredentials({ ...credentials, email: e.target.value })}
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
                     onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
@@ -158,7 +146,7 @@ export default function Login({ onLoginSuccess }) {
                     required
                     placeholder="Enter your password" 
                     value={credentials.password}
-                    onChange={(e) => setCredentials({...credentials, password: e.target.value})}
+                    onChange={(e) => setCredentials({ ...credentials, password: e.target.value })}
                     style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }}
                     onFocus={(e) => e.target.style.borderColor = '#E32636'}
                     onBlur={(e) => e.target.style.borderColor = '#E5E7EB'} 
@@ -167,9 +155,7 @@ export default function Login({ onLoginSuccess }) {
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>
-                  {authStep === 'customer-pin' ? "6-Digit PIN" : "6-Digit TOTP Code"}
-                </label>
+                <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>6-Digit PIN</label>
                 <input 
                   id="securityCode"
                   type="password" 
