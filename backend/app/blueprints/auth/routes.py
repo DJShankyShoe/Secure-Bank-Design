@@ -5,7 +5,7 @@ globally (SR-05); inputs are allowlist-validated in the service (SR-06).
 
 from __future__ import annotations
 
-from flask import current_app, g, jsonify, request
+from flask import abort, current_app, g, jsonify, request
 from flask_wtf.csrf import generate_csrf
 
 from ...security.decorators import require_authenticated
@@ -33,6 +33,7 @@ from .login_service import (
 from .service import (
     AuthServiceError,
     confirm_totp_enrolment,
+    get_user_profile,
     register_customer,
 )
 
@@ -216,6 +217,20 @@ def logout_route():
     response = jsonify(status="logged_out")
     clear_session_cookie(response, secure=_cookie_secure())
     return response, 200
+
+
+@bp.get("/me")
+@require_authenticated
+def me():
+    """Return the current authenticated user's profile for the SPA (FR-08).
+
+    Lets the frontend show who's logged in and gate UI by ``role``. Masked NRIC
+    only; no secrets. 401 if not authenticated.
+    """
+    profile = get_user_profile(user_id=g.user_id)
+    if not profile:
+        abort(401)
+    return jsonify(profile), 200
 
 
 @bp.post("/email")
