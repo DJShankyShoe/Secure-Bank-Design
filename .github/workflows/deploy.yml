@@ -3,7 +3,8 @@ name: AWS EC2 Continuous Deployment
 on:
   push:
     branches:
-      - #integration-test 
+      - #deployment # <-- uncomment this to deploy at this branch
+      - #integration-test # <-- uncomment this to deployat this branch
 
 jobs:
   build-and-deploy:
