@@ -189,7 +189,8 @@ export const api = {
     }
   },
 
-  // Current authenticated user's profile (masked NRIC only, no secrets).
+  // Current authenticated user's profile (name, role, status).
+  // NOTE: does NOT include PIN status — use getPinStatus() for that.
   me: () =>
     request("/auth/me", {
       method: "GET",
@@ -294,13 +295,23 @@ export const api = {
   // TRANSACTIONS
   // =========================
 
-  setTransactionPin: (password, pin) =>
+  // ✅ NEW: check whether the user already has a transaction PIN set.
+  // Per backend spec: GET /transactions/pin → { pin_set: true/false }
+  getPinStatus: () =>
+    request("/transactions/pin", {
+      method: "GET",
+    }),
+
+  // Set (first time) or replace (subsequent) the transaction PIN.
+  // Per backend spec: password is only required when REPLACING an existing PIN.
+  // First-time setup (SetupPin.jsx) omits password; a future "change PIN" flow
+  // in Settings should pass the current password as the second argument.
+  setTransactionPin: (pin, password = null) =>
     request("/transactions/pin", {
       method: "POST",
-      body: JSON.stringify({
-        password,
-        pin,
-      }),
+      body: JSON.stringify(
+        password ? { pin, password } : { pin }
+      ),
     }),
 
   getBillers: () =>

@@ -65,12 +65,22 @@ export default function Login({ onLoginSuccess }) {
           console.error(profileErr);
         }
 
-        // If MFA succeeds, they are fully verified!
+        // ✅ PIN status comes from its own endpoint, not /auth/me.
+        // GET /transactions/pin -> { pin_set: true/false }
+        let pinSetupCompleted = false;
+        try {
+          const pinStatus = await api.getPinStatus();
+          pinSetupCompleted = pinStatus.pin_set ?? false;
+        } catch (pinErr) {
+          console.error("Could not check PIN status", pinErr);
+        }
+
+        // If MFA succeeds, they are fully verified on the credentials front.
         onLoginSuccess({
           role: profile.role || 'customer',
           emailVerified: profile.email_verified ?? true,
           totpConfirmed: true,
-          pinSetupCompleted: true
+          pinSetupCompleted
         });
 
       } catch (err) {

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from "../../api/api";
 
 export default function SetupPin({ onSetupComplete }) {
   const navigate = useNavigate();
   const [pinData, setPinData] = useState({ pin: '', confirmPin: '' });
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -20,15 +22,22 @@ export default function SetupPin({ onSetupComplete }) {
       return;
     }
 
-    // TODO (Backend):
-    // 1. Hash the PIN (Argon2id or bcrypt) before storing it in the database.
-    // 2. Mark the user's `requires_pin_setup` flag as false in the database.
-    console.log("Mock PIN Setup Complete:", pinData.pin);
-    
-    if (onSetupComplete) {
-      onSetupComplete('customer');
-    } 
-    navigate('/dashboard');
+    setSubmitting(true);
+    try {
+      // persist the PIN via the API instead of console.log
+      // Backend is responsible for hashing (Argon2id/bcrypt) and setting
+      // requires_pin_setup = false / pin_setup_completed = true in the DB.
+      await api.setTransactionPin(pinData.pin);
+
+      if (onSetupComplete) {
+        onSetupComplete();
+      }
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Could not set up your PIN. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -59,9 +68,9 @@ export default function SetupPin({ onSetupComplete }) {
 
       {/* PIN Setup Form */}
       <div style={{ flex: '1', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 8%', minWidth: '500px' }}>
-        
+
         <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
-          
+
           <div style={{ marginBottom: '32px' }}>
             <h2 style={{ fontSize: '2rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>
               Create Transaction PIN
@@ -78,49 +87,52 @@ export default function SetupPin({ onSetupComplete }) {
           )}
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label htmlFor="pin" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Enter 6-Digit PIN</label>
-              <input 
+              <input
                 id="pin"
-                type="password" 
+                type="password"
                 inputMode="numeric"
                 maxLength="6"
                 required
-                placeholder="• • • • • •" 
+                placeholder="• • • • • •"
                 value={pinData.pin}
                 onChange={(e) => setPinData({...pinData, pin: e.target.value.replace(/\D/g, '')})}
-                style={{ padding: '16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1.5rem', letterSpacing: '8px', textAlign: 'center', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB', fontWeight: '700' }} 
+                style={{ padding: '16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1.5rem', letterSpacing: '8px', textAlign: 'center', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB', fontWeight: '700' }}
                 onFocus={(e) => e.target.style.borderColor = '#E32636'}
                 onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
+                disabled={submitting}
               />
             </div>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label htmlFor="confirmPin" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>Confirm 6-Digit PIN</label>
-              <input 
+              <input
                 id="confirmPin"
-                type="password" 
+                type="password"
                 inputMode="numeric"
                 maxLength="6"
                 required
-                placeholder="• • • • • •" 
+                placeholder="• • • • • •"
                 value={pinData.confirmPin}
                 onChange={(e) => setPinData({...pinData, confirmPin: e.target.value.replace(/\D/g, '')})}
                 style={{ padding: '16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1.5rem', letterSpacing: '8px', textAlign: 'center', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB', fontWeight: '700' }}
                 onFocus={(e) => e.target.style.borderColor = '#E32636'}
-                onBlur={(e) => e.target.style.borderColor = '#E5E7EB'} 
+                onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
+                disabled={submitting}
               />
             </div>
 
             <div style={{ marginTop: '16px' }}>
-              <button 
-                type="submit" 
-                style={{ width: '100%', padding: '16px', backgroundColor: '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', boxShadow: '0 4px 6px -1px rgba(227, 38, 54, 0.2), 0 2px 4px -1px rgba(227, 38, 54, 0.1)' }}
-                onMouseOver={(e) => e.target.style.backgroundColor = '#B91C1C'}
-                onMouseOut={(e) => e.target.style.backgroundColor = '#E32636'}
+              <button
+                type="submit"
+                disabled={submitting}
+                style={{ width: '100%', padding: '16px', backgroundColor: submitting ? '#F3A5AB' : '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: submitting ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s', boxShadow: '0 4px 6px -1px rgba(227, 38, 54, 0.2), 0 2px 4px -1px rgba(227, 38, 54, 0.1)' }}
+                onMouseOver={(e) => { if (!submitting) e.target.style.backgroundColor = '#B91C1C'; }}
+                onMouseOut={(e) => { if (!submitting) e.target.style.backgroundColor = '#E32636'; }}
               >
-                Complete Setup
+                {submitting ? "Setting up..." : "Complete Setup"}
               </button>
             </div>
           </form>

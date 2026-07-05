@@ -51,7 +51,7 @@ export default function App() {
     isAuthenticated: false,
     role: null,
     emailVerified: true,
-    pinSetupCompleted: true   // ✅ FIXED: this is BANK PIN, NOT OTP
+    pinSetupCompleted: true   // default optimistic value until checks resolve
   });
 
   // Until we've asked the backend whether a session already exists, we don't know
@@ -62,13 +62,24 @@ export default function App() {
   // or a direct visit to /login correctly recognises an already-logged-in user.
   useEffect(() => {
     api.me()
-      .then((profile) => {
+      .then(async (profile) => {
         sessionStorage.setItem("securebank_user", JSON.stringify(profile));
+
+        // ✅ PIN status comes from its own endpoint, not /auth/me.
+        // GET /transactions/pin -> { pin_set: true/false }
+        let pinSetupCompleted = false;
+        try {
+          const pinStatus = await api.getPinStatus();
+          pinSetupCompleted = pinStatus.pin_set ?? false;
+        } catch (pinErr) {
+          console.error("Could not check PIN status", pinErr);
+        }
+
         setAuth({
           isAuthenticated: true,
           role: profile.role,
           emailVerified: profile.email_verified ?? true,
-          pinSetupCompleted: true
+          pinSetupCompleted
         });
       })
       .catch(() => {
@@ -105,12 +116,11 @@ export default function App() {
   };
 
   const handleLoginSuccess = (loginData) => {
-    const emailVerified = loginData.emailVerified;
-    const pinSetupCompleted = loginData.pinSetupCompleted;
+    const { role, emailVerified, pinSetupCompleted } = loginData;
 
     setAuth({
-      isAuthenticated: emailVerified && pinSetupCompleted,
-      role: loginData.role,
+      isAuthenticated: true,
+      role,
       emailVerified,
       pinSetupCompleted
     });
