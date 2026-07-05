@@ -2,15 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { api } from "../../api/api";
 
-export default function VerifyEmail({ onVerificationComplete }) {
+export default function VerifyEmail({ onVerificationComplete, mode = "signup" }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
 
+  // "change" = confirming a NEW email address (FR-04); "signup" = activating a
+  // new account's email (FR-01). They hit different backend endpoints.
+  const isChange = mode === "change";
+
   const RESEND_COOLDOWN_SECONDS = 60;
 
-  const [status, setStatus] = useState(token ? 'loading' : 'prompt');
+  const [status, setStatus] = useState(token ? 'loading' : (isChange ? 'error' : 'prompt'));
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
   const [cooldown, setCooldown] = useState(0);
@@ -34,12 +38,16 @@ export default function VerifyEmail({ onVerificationComplete }) {
   useEffect(() => {
     const verifyEmail = async () => {
       if (!token) {
-        setStatus('prompt');
+        setStatus(isChange ? 'error' : 'prompt');
         return;
       }
 
       try {
-        await api.verifySignupEmail(token);
+        if (isChange) {
+          await api.verifyEmailChange(token);
+        } else {
+          await api.verifySignupEmail(token);
+        }
         setStatus('success');
       } catch (err) {
         console.error(err);
@@ -48,7 +56,7 @@ export default function VerifyEmail({ onVerificationComplete }) {
     };
 
     verifyEmail();
-  }, [token]);
+  }, [token, isChange]);
 
   const handleResendEmail = async () => {
     if (!email) {
@@ -223,17 +231,19 @@ export default function VerifyEmail({ onVerificationComplete }) {
               </div>
 
               <div>
-                <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Email Verified</h2>
+                <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>{isChange ? 'Email Updated' : 'Email Verified'}</h2>
                 <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>
-                  Your email address has been successfully confirmed. You can now log in.
+                  {isChange
+                    ? 'Your email address has been updated.'
+                    : 'Your email address has been successfully confirmed. You can now log in.'}
                 </p>
               </div>
 
               <button
-                onClick={handleContinue}
+                onClick={isChange ? () => navigate('/settings') : handleContinue}
                 style={{ width: '100%', padding: '16px', backgroundColor: '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
               >
-                Proceed to Log In
+                {isChange ? 'Back to Settings' : 'Proceed to Log In'}
               </button>
             </div>
           )}
@@ -249,36 +259,49 @@ export default function VerifyEmail({ onVerificationComplete }) {
               <div>
                 <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Link Expired or Invalid</h2>
                 <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>
-                  This verification link is invalid or has already expired.
+                  {isChange
+                    ? 'This email-change link is invalid or has already expired. Please request the change again from Settings.'
+                    : 'This verification link is invalid or has already expired.'}
                 </p>
               </div>
 
-              <button
-                onClick={() => {
-                  navigate('/verify-email');
-                  setStatus('prompt');
-                }}
-                style={{ width: '100%', padding: '16px', backgroundColor: '#271711', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
-              >
-                Request a new link
-              </button>
+              {isChange ? (
+                <button
+                  onClick={() => navigate('/settings')}
+                  style={{ width: '100%', padding: '16px', backgroundColor: '#271711', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
+                >
+                  Back to Settings
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      navigate('/verify-email');
+                      setStatus('prompt');
+                    }}
+                    style={{ width: '100%', padding: '16px', backgroundColor: '#271711', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', marginTop: '16px' }}
+                  >
+                    Request a new link
+                  </button>
 
-              {/* NEW: Back button on error state too */}
-              <button
-                onClick={handleBackToLogin}
-                style={{
-                  width: '100%',
-                  padding: '14px',
-                  backgroundColor: 'transparent',
-                  color: '#6B7280',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.95rem',
-                  fontWeight: '600'
-                }}
-              >
-                ← Back to Login
-              </button>
+                  {/* NEW: Back button on error state too */}
+                  <button
+                    onClick={handleBackToLogin}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      backgroundColor: 'transparent',
+                      color: '#6B7280',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '0.95rem',
+                      fontWeight: '600'
+                    }}
+                  >
+                    ← Back to Login
+                  </button>
+                </>
+              )}
             </div>
           )}
 

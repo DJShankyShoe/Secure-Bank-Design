@@ -237,12 +237,13 @@ def me():
 @require_authenticated
 def request_email():
     """Request an email change; emails a 30-min verification link to the new
-    address (FR-04). Body: ``new_email``. Always returns a generic 200.
+    address (FR-04). Body: ``new_email``, ``password`` (current password re-auth).
+    Wrong password → 401; otherwise a generic 200 (anti-enumeration on the address).
     """
     body = _json()
     try:
         request_email_change(user_id=g.user_id, new_email=body.get("new_email", ""),
-                             source_ip=client_ip())
+                             password=body.get("password", ""), source_ip=client_ip())
     except ValidationError as exc:
         return jsonify(error=exc.message), 400
     except EmailChangeError as exc:

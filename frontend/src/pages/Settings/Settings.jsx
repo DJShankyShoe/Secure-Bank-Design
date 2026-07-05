@@ -3,11 +3,21 @@ import { api } from '../../api/api';
 
 export default function Settings() {
   const [newEmail, setNewEmail] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
   const [notifyOnTransfer, setNotifyOnTransfer] = useState(true);
   const [notifyOnLogin, setNotifyOnLogin] = useState(true);
   const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+
+  // Show instantly from the cached profile, then refresh from the server.
+  const [currentEmail, setCurrentEmail] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('securebank_user') || '{}').email || '';
+    } catch {
+      return '';
+    }
+  });
 
   useEffect(() => {
     api.getAccountPreferences()
@@ -16,6 +26,10 @@ export default function Settings() {
         setNotifyOnLogin(data.notify_on_login);
       })
       .catch(() => {});
+
+    api.me()
+      .then(profile => profile.email && setCurrentEmail(profile.email))
+      .catch(() => {});
   }, []);
 
   const handleUpdateEmail = async (e) => {
@@ -23,9 +37,10 @@ export default function Settings() {
     if (isSubmittingEmail) return;
     try {
       setIsSubmittingEmail(true);
-      await api.requestEmailChange(newEmail);
+      await api.requestEmailChange(newEmail, emailPassword);
       alert("Verification link sent to your new email. A security alert has been sent to your current email.");
       setNewEmail('');
+      setEmailPassword('');
     } catch (err) {
       alert(err.message);
     } finally {
@@ -131,15 +146,28 @@ export default function Settings() {
         {/* --- UPDATE EMAIL --- */}
         <div className="content-card">
           <h3 className="card-title">Update Email Address</h3>
+          <div className="helper-text" style={{ marginTop: '8px' }}>
+            Current email: <strong style={{ color: '#111827' }}>{currentEmail || '—'}</strong>
+          </div>
           <form onSubmit={handleUpdateEmail} style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '400px', marginTop: '16px' }}>
             <div className="field">
               <label>New Email Address</label>
-              <input 
-                type="email" 
-                required 
+              <input
+                type="email"
+                required
                 placeholder="e.g. new.email@example.com"
-                value={newEmail} 
-                onChange={(e) => setNewEmail(e.target.value)} 
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Current Password</label>
+              <input
+                type="password"
+                required
+                placeholder="Confirm your password to change email"
+                value={emailPassword}
+                onChange={(e) => setEmailPassword(e.target.value)}
               />
             </div>
             <div>

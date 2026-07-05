@@ -171,11 +171,12 @@ export const api = {
       method: "GET",
     }),
 
-  requestEmailChange: (new_email) =>
+  requestEmailChange: (new_email, password) =>
     request("/auth/email", {
       method: "POST",
       body: JSON.stringify({
         new_email,
+        password,
       }),
     }),
 

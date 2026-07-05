@@ -59,7 +59,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /auth/logout` | Auth | Revoke the session |
 | `GET /auth/me` | Auth | Current user's profile (name, role, status) |
 | `POST /auth/password/change` | Auth | Change password (current + new) |
-| `POST /auth/email` | Auth | Request an email change (link to new address) |
+| `POST /auth/email` | Auth | Request an email change (current password + link to new address) |
 | `POST /auth/email/verify` | Token | Confirm the new email |
 | `POST /auth/unlock/request` | Public | Email an unlock link (locked account) |
 | `POST /auth/unlock/verify` | Token | Consume an unlock link |
@@ -203,11 +203,15 @@ from the old (`400`). On success **all your *other* sessions are revoked** (this
 
 ### `POST /auth/email`  *(auth required)* — request email change (30-min link to the new address)
 ```jsonc
-{ "new_email": "new@b.com" }               // → 200 { "status": "verification_sent" }
+{ "new_email": "new@b.com", "password": "<current password>" }
+// → 200 { "status": "verification_sent" }   (generic, even if the address is already in use)
+// → 401 if the current password is wrong
 ```
+Re-verifies the caller's **current password** first (so a hijacked session can't change the email).
 Rate-limited to 10/hour per account → `429` when exceeded. Sends a **verification link to the new
-address** (only that confirms the change) **and a security alert to the current/old address** (no
-token) so the real owner is notified if a hijacked session tries to change the email.
+address** — the link points at `<FRONTEND_BASE_URL>/verify-email-change?token=…` and is confirmed via
+`POST /auth/email/verify` — **and a security alert to the current/old address** (no token) so the real
+owner is notified if a hijacked session tries to change the email.
 
 ### `POST /auth/email/verify`
 ```jsonc

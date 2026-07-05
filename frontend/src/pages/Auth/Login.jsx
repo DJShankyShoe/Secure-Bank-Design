@@ -123,7 +123,7 @@ export default function Login({ onLoginSuccess }) {
               {authStep === 'mfa' ? "Security Verification" : "Welcome Back"}
             </h2>
             <p style={{ color: '#4B5563', fontSize: '1.05rem', margin: 0 }}>
-              {authStep === 'mfa' ? "Please enter your 6-digit transaction PIN to confirm your identity." : "Please enter your credentials to securely access your accounts."}
+              {authStep === 'mfa' ? "Please enter the 6-digit code from your authenticator app to confirm your identity." : "Please enter your credentials to securely access your accounts."}
             </p>
           </div>
 
@@ -172,7 +172,7 @@ export default function Login({ onLoginSuccess }) {
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>6-Digit PIN</label>
+                <label htmlFor="securityCode" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>6-Digit Authenticator Code (OTP)</label>
                 <input
                   id="securityCode"
                   type="password"

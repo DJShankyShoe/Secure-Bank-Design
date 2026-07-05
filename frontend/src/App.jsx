@@ -146,6 +146,9 @@ export default function App() {
           }
         />
 
+        {/* EMAIL CHANGE VERIFICATION (link sent to the NEW address, FR-04) */}
+        <Route path="/verify-email-change" element={<VerifyEmail mode="change" />} />
+
         {/* BANK PIN SETUP (NOT OTP) */}
         <Route
           path="/setup-pin"

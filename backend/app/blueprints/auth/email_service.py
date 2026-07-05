@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 from ...config import Config
 from ...extensions import db
 from ...models import PendingEmailChange, User
-from ...security import lockout
+from ...security import crypto, lockout
 from ...security.validation import validate_email
 from ...services.audit import emit_audit
 from ...services.email import action_link, render_email, send_email
@@ -33,6 +33,11 @@ class EmailChangeError(Exception):
 
 class SameEmail(EmailChangeError):
     message = "New email must be different from the current one."
+
+
+class InvalidPassword(EmailChangeError):
+    status = 401
+    message = "Current password is incorrect."
 
 
 class InvalidToken(EmailChangeError):
@@ -53,8 +58,13 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) -> None:
-    """Start an email change: store a hashed 30-min token and email the link (FR-04)."""
+def request_email_change(*, user_id: uuid.UUID, new_email: str, password: str,
+                         source_ip: str) -> None:
+    """Start an email change: store a hashed 30-min token and email the link (FR-04).
+
+    Re-verifies the caller's **current password** first, so a hijacked/unattended
+    session cannot silently start changing the registered email.
+    """
     new_email = validate_email(new_email)
 
     session = db.app_session()
@@ -65,6 +75,12 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) 
         user = session.get(User, user_id)
         if user is None:
             raise InvalidToken()
+        # Re-authenticate the current password before anything else (FR-04).
+        if not crypto.verify_password(user.password_hash, password or ""):
+            emit_audit("EMAIL_CHANGE_REQUEST", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "bad_password"})
+            raise InvalidPassword()
         if new_email == user.email:
             raise SameEmail()
         old_email = user.email  # captured for the security alert to the OLD address
@@ -108,7 +124,7 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, source_ip: str) 
             to=target,
             subject="Confirm your new SecureBank email",
             body=render_email("verify_email.txt",
-                              verify_url=action_link("/verify-email", token)),
+                              verify_url=action_link("/verify-email-change", token)),
         )
         # Security alert to the OLD address (no token) so a hijacked session that
         # changes the email is noticed by the real owner (FR-04).
