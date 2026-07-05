@@ -228,7 +228,7 @@ def transfer(
     # 1) Replay short-circuit (no PIN re-prompt, no re-execution) — SR-08.
     probe = db.app_session()
     try:
-        replay = replay_or_conflict(probe, idempotency_key, request_hash)
+        replay = replay_or_conflict(probe, idempotency_key, request_hash, user_id)
         if replay is not None:
             return replay
     finally:
@@ -309,7 +309,7 @@ def transfer(
         # Concurrent duplicate key won the race -> replay its stored result.
         retry = db.app_session()
         try:
-            replay = replay_or_conflict(retry, idempotency_key, request_hash)
+            replay = replay_or_conflict(retry, idempotency_key, request_hash, user_id)
         finally:
             retry.close()
         if replay is not None:
@@ -386,7 +386,7 @@ def bill_payment(
 
     probe = db.app_session()
     try:
-        replay = replay_or_conflict(probe, idempotency_key, request_hash)
+        replay = replay_or_conflict(probe, idempotency_key, request_hash, user_id)
         if replay is not None:
             return replay
     finally:
@@ -451,7 +451,7 @@ def bill_payment(
         session.rollback()
         retry = db.app_session()
         try:
-            replay = replay_or_conflict(retry, idempotency_key, request_hash)
+            replay = replay_or_conflict(retry, idempotency_key, request_hash, user_id)
         finally:
             retry.close()
         if replay is not None:

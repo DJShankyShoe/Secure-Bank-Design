@@ -197,6 +197,23 @@ def test_idempotency_conflict_409(require_db, txn_app):
     assert r.status_code == 409
 
 
+def test_idempotency_key_scoped_per_user_no_cross_user_replay(require_db, txn_app):
+    # User A performs a transfer with key K (creates the idempotency record).
+    a, _ = _setup_user(txn_app)
+    a_src = _create_account(a)
+    a_dst = _create_account(a, "current")
+    _fund(txn_app, a_src["account_id"], 200_000)
+    key = str(uuid.uuid4())
+    assert _transfer(a, a_src["account_number"], a_dst["account_number"],
+                     50_000, key=key).status_code == 201
+
+    # User B replays A's key with the SAME body: must NOT receive A's receipt.
+    b, _ = _setup_user(txn_app)
+    r = _transfer(b, a_src["account_number"], a_dst["account_number"], 50_000, key=key)
+    assert r.status_code == 409                       # conflict, not a replay (SR-08 + ownership)
+    assert "reference_number" not in r.get_json()     # A's receipt not leaked
+
+
 def test_transfer_source_not_owned_404(require_db, txn_app):
     owner, _ = _setup_user(txn_app)
     src = _create_account(owner)
