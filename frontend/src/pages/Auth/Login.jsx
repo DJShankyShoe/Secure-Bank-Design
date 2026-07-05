@@ -55,10 +55,20 @@ export default function Login({ onLoginSuccess }) {
       try {
         await api.verifyMfa(mfaToken, securityCode);
 
+        // Pull the profile so the app can personalise the UI (sidebar, dashboard)
+        // and gate by the real role. Non-fatal if it fails — fall back to defaults.
+        let profile = {};
+        try {
+          profile = await api.me();
+          sessionStorage.setItem("securebank_user", JSON.stringify(profile));
+        } catch (profileErr) {
+          console.error(profileErr);
+        }
+
         // If MFA succeeds, they are fully verified!
         onLoginSuccess({
-          role: 'customer', // Assuming default customer, adjust if backend returns role
-          emailVerified: true,
+          role: profile.role || 'customer',
+          emailVerified: profile.email_verified ?? true,
           totpConfirmed: true,
           pinSetupCompleted: true
         });

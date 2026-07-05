@@ -165,6 +165,12 @@ export const api = {
     }
   },
 
+  // Current authenticated user's profile (masked NRIC only, no secrets).
+  me: () =>
+    request("/auth/me", {
+      method: "GET",
+    }),
+
   requestEmailChange: (new_email) =>
     request("/auth/email", {
       method: "POST",
