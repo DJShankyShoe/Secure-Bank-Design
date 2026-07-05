@@ -13,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pyotp
 import pytest
-from conftest import unique_nric
 from sqlalchemy import func, select
 
 from app.blueprints.auth.service import (
@@ -24,7 +23,6 @@ from app.blueprints.auth.service import (
     register_customer,
 )
 from app.security import crypto
-from app.security.masking import mask_nric
 from app.security.validation import ValidationError
 
 
@@ -39,7 +37,7 @@ def _secret_from_uri(uri: str) -> str:
 def _register(app, **over):
     kwargs = dict(
         full_name="Tan Ah Kow",
-        nric=unique_nric(),
+        nric="S1234567D",
         email=_email(),
         password="Str0ng!Passw0rd",
         source_ip="203.0.113.5",
@@ -71,11 +69,9 @@ def test_register_creates_pending_user_with_protected_secrets(require_db, app):
         assert user.password_hash != kwargs["password"]
         assert crypto.verify_password(user.password_hash, kwargs["password"]) is True
         # NRIC encrypted (decrypts back) and masked.
-        assert user.nric_masked == mask_nric(kwargs["nric"])
+        assert user.nric_masked == "S****567D"
         key = app.extensions["securebank_config"].aes_encryption_key
-        assert crypto.aes_decrypt(user.nric_encrypted, key).decode() == kwargs["nric"]
-        # NRIC blind index populated (drives one-account-per-NRIC uniqueness).
-        assert user.nric_hash == crypto.nric_blind_index(kwargs["nric"], key)
+        assert crypto.aes_decrypt(user.nric_encrypted, key).decode() == "S1234567D"
         # TOTP seed stored encrypted (not the bare base32).
         assert user.totp_seed_encrypted is not None
         # Backup codes hashed, count 10, none stored in plaintext.
@@ -104,32 +100,11 @@ def test_register_duplicate_email_rejected(require_db, app):
             register_customer(**kwargs)
 
 
-def test_register_duplicate_nric_rejected(require_db, app):
-    # Same NRIC, DIFFERENT email -> still rejected (one account per person, FR-01).
-    kwargs, _ = _register(app)
-    with app.app_context():
-        with pytest.raises(DuplicateRegistration):
-            register_customer(**{**kwargs, "email": _email()})
-
-
-def test_duplicate_email_and_nric_share_generic_message(require_db, app):
-    # The client-facing outcome must not reveal WHICH field collided
-    # (anti-enumeration, SR-09): both raise the same status + message.
-    kwargs, _ = _register(app)
-    with app.app_context():
-        with pytest.raises(DuplicateRegistration) as dup_email:
-            register_customer(**kwargs)
-        with pytest.raises(DuplicateRegistration) as dup_nric:
-            register_customer(**{**kwargs, "email": _email()})
-    assert dup_email.value.message == dup_nric.value.message
-    assert dup_email.value.status == dup_nric.value.status == 409
-
-
 def test_register_weak_password_rejected(require_db, app):
     with app.app_context():
         with pytest.raises(ValidationError):
             register_customer(
-                full_name="A B", nric=unique_nric(), email=_email(),
+                full_name="A B", nric="S1234567D", email=_email(),
                 password="weak", source_ip="203.0.113.5",
             )
 
@@ -214,7 +189,7 @@ _HTTPS = {"X-Forwarded-Proto": "https"}
 def test_register_endpoint_201(require_db, api_client):
     r = api_client.post(
         "/auth/register",
-        json={"full_name": "Lim Bee", "nric": unique_nric(),
+        json={"full_name": "Lim Bee", "nric": "S7654321A",
               "email": _email(), "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )
@@ -240,7 +215,7 @@ def test_verify_endpoint_totp_then_email(require_db, api_client):
     email = _email()
     r1 = api_client.post(
         "/auth/register",
-        json={"full_name": "Goh Tan", "nric": unique_nric(),
+        json={"full_name": "Goh Tan", "nric": "S1112223J",
               "email": email, "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )
@@ -267,7 +242,7 @@ def test_login_pending_email_returns_verification_required(require_db, api_clien
     email = _email()
     r1 = api_client.post(
         "/auth/register",
-        json={"full_name": "Pend V", "nric": unique_nric(),
+        json={"full_name": "Pend V", "nric": "S1234567D",
               "email": email, "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )
@@ -288,7 +263,7 @@ def test_reissue_totp_provisioning(require_db, api_client):
     email = _email()
     r1 = api_client.post(
         "/auth/register",
-        json={"full_name": "Re Totp", "nric": unique_nric(),
+        json={"full_name": "Re Totp", "nric": "S1234567D",
               "email": email, "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )
@@ -307,7 +282,7 @@ def test_reissue_totp_denied_after_setup(require_db, api_client):
     email = _email()
     r1 = api_client.post(
         "/auth/register",
-        json={"full_name": "Done Totp", "nric": unique_nric(),
+        json={"full_name": "Done Totp", "nric": "S1234567D",
               "email": email, "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )
@@ -324,7 +299,7 @@ def test_resend_signup_email_sends_a_new_link(require_db, api_client):
     email = _email()
     api_client.post(
         "/auth/register",
-        json={"full_name": "Re Send", "nric": unique_nric(),
+        json={"full_name": "Re Send", "nric": "S1234567D",
               "email": email, "password": "Str0ng!Passw0rd"},
         headers=_HTTPS,
     )

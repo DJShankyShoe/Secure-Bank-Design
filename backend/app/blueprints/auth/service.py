@@ -17,8 +17,7 @@ from dataclasses import dataclass
 
 import pyotp
 from flask import current_app
-from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 
 from ...config import Config
 from ...extensions import db
@@ -46,10 +45,8 @@ class AuthServiceError(Exception):
 
 
 class DuplicateRegistration(AuthServiceError):
-    # Generic + field-agnostic: never reveals whether it was the email or the NRIC
-    # that already exists, so registration can't be used to enumerate either (SR-09).
     status = 409
-    message = "An account with these details already exists."
+    message = "Registration could not be completed."
 
 
 class EnrolmentError(AuthServiceError):
@@ -96,7 +93,6 @@ def register_customer(
     password = validate_password(password)
 
     key = _aes_key()
-    nric_hash = crypto.nric_blind_index(nric, key)
     seed = pyotp.random_base32()
     plaintext_codes = [
         secrets.token_hex(_BACKUP_CODE_BYTES).upper() for _ in range(_BACKUP_CODE_COUNT)
@@ -104,20 +100,12 @@ def register_customer(
 
     session = db.app_session()
     try:
-        # Reject a duplicate email OR NRIC — each identifies one person, so both are
-        # one-per-account (SR-06/FR-01). The blind index (not the random-nonce
-        # ciphertext) makes the NRIC check possible. The client-facing outcome is
-        # identical for either collision (anti-enumeration, SR-09); the specific
-        # reason is recorded only in the server-side audit trail.
-        existing = session.execute(
-            select(User.email, User.nric_hash).where(
-                or_(User.email == email, User.nric_hash == nric_hash)
-            )
+        exists = session.execute(
+            select(User.user_id).where(User.email == email)
         ).first()
-        if existing is not None:
-            reason = "duplicate_email" if existing.email == email else "duplicate_nric"
+        if exists is not None:
             emit_audit("REGISTER", "denied", source_ip=source_ip,
-                       action_detail={"reason": reason})
+                       action_detail={"reason": "duplicate_email"})
             raise DuplicateRegistration()
 
         user = User(
@@ -126,7 +114,6 @@ def register_customer(
             full_name=full_name,
             nric_encrypted=crypto.aes_encrypt(nric, key),
             nric_masked=mask_nric(nric),
-            nric_hash=nric_hash,
             password_hash=crypto.hash_password(password),
             totp_seed_encrypted=crypto.aes_encrypt(seed, key),
             role="customer",
@@ -145,13 +132,6 @@ def register_customer(
     except AuthServiceError:
         session.rollback()
         raise
-    except IntegrityError:
-        # Lost a race on the email/NRIC UNIQUE constraint — same generic outcome as
-        # the pre-check above (defence in depth against a check-then-insert TOCTOU).
-        session.rollback()
-        emit_audit("REGISTER", "denied", source_ip=source_ip,
-                   action_detail={"reason": "duplicate_constraint"})
-        raise DuplicateRegistration()
     except Exception:
         session.rollback()
         raise

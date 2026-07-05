@@ -16,8 +16,6 @@ from app.blueprints.auth.login_service import (
     login_password,
 )
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from app.security.masking import mask_nric
-from conftest import unique_nric
 
 _IP = "203.0.113.9"
 
@@ -33,16 +31,16 @@ def _secret(uri: str) -> str:
 def _register_and_activate(app) -> dict:
     from conftest import activate_signup_email
 
-    email, password, nric = _email(), "Str0ng!Passw0rd", unique_nric()
+    email, password = _email(), "Str0ng!Passw0rd"
     with app.app_context():
         res = register_customer(
-            full_name="Login User", nric=nric, email=email,
+            full_name="Login User", nric="S1234567D", email=email,
             password=password, source_ip=_IP,
         )
         secret = _secret(res.provisioning_uri)
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
         activate_signup_email(app, email)  # FR-01: email must also be verified
-    return {"email": email, "password": password, "nric": nric, "secret": secret,
+    return {"email": email, "password": password, "secret": secret,
             "user_id": res.user_id, "backup_codes": res.backup_codes}
 
 
@@ -84,7 +82,7 @@ def test_login_pending_account_signals_verification_required(require_db, app):
 
     email, password = _email(), "Str0ng!Passw0rd"
     with app.app_context():
-        register_customer(full_name="Pending P", nric=unique_nric(), email=email,
+        register_customer(full_name="Pending P", nric="S1234567D", email=email,
                           password=password, source_ip=_IP)
         with pytest.raises(VerificationRequired) as e:
             login_password(email=email, password=password, source_ip=_IP)
@@ -95,7 +93,7 @@ def test_login_pending_wrong_password_still_generic(require_db, app):
     # Wrong password on a pending account stays generic (no info leak).
     email = _email()
     with app.app_context():
-        register_customer(full_name="Pending Q", nric=unique_nric(), email=email,
+        register_customer(full_name="Pending Q", nric="S1234567D", email=email,
                           password="Str0ng!Passw0rd", source_ip=_IP)
         with pytest.raises(InvalidCredentials):
             login_password(email=email, password="WrongPass123!", source_ip=_IP)
@@ -322,7 +320,7 @@ def test_me_returns_profile(require_db, api_client, app):
     assert body["email"] == u["email"]
     assert body["role"] == "customer"
     assert body["full_name"] == "Login User"
-    assert body["nric_masked"] == mask_nric(u["nric"])
+    assert body["nric_masked"] == "S****567D"
     # never leak secrets / plaintext NRIC
     assert "nric" not in body and "password" not in body and "totp_seed" not in body
 

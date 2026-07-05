@@ -21,12 +21,13 @@ from app.blueprints.auth.login_service import (
     login_password,
 )
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from conftest import activate_signup_email, unique_nric
+from conftest import activate_signup_email
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.21"
 _PW = "Str0ng!Passw0rd"
 _NEW_PW = "N3w!Str0ngPassw0rd"
+_NRIC = "S1234567D"   # the NRIC every test user registers with
 
 
 @pytest.fixture(scope="module")
@@ -44,14 +45,13 @@ def _email() -> str:
 
 def _register_active(app) -> dict:
     email = _email()
-    nric = unique_nric()
     with app.app_context():
-        res = register_customer(full_name="Reset User", nric=nric, email=email,
+        res = register_customer(full_name="Reset User", nric="S1234567D", email=email,
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
         activate_signup_email(app, email)  # FR-01: verify signup email
-    return {"email": email, "nric": nric, "secret": secret, "user_id": res.user_id,
+    return {"email": email, "secret": secret, "user_id": res.user_id,
             "backup_codes": res.backup_codes}
 
 
@@ -79,13 +79,12 @@ def _token_from(body: str) -> str:
     return body.split("token=")[1].split()[0].strip()
 
 
-def _request_token(app, c, u) -> str:
-    # NRIC must match the one the user registered with (reset requires email+NRIC).
+def _request_token(app, c, email, nric=_NRIC) -> str:
     _outbox(app).clear()
     r = c.post("/auth/password/reset/request",
-               json={"email": u["email"], "nric": u["nric"]}, base_url=_HTTPS)
+               json={"email": email, "nric": nric}, base_url=_HTTPS)
     assert r.status_code == 200
-    return _token_from(_to(app, u["email"])[0]["body"])
+    return _token_from(_to(app, email)[0]["body"])
 
 
 def _verify(c, token, new_password, totp_code):
@@ -100,7 +99,7 @@ def _verify(c, token, new_password, totp_code):
 def test_request_and_reset_changes_password(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
     with reset_app.app_context():
@@ -114,7 +113,7 @@ def test_request_and_reset_changes_password(require_db, reset_app):
 def test_reset_requires_valid_second_factor(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     # Valid link + valid new password but WRONG code -> 401, no change.
     assert _verify(c, token, _NEW_PW, "000000").status_code == 401
@@ -137,7 +136,7 @@ def test_request_with_wrong_nric_sends_nothing(require_db, reset_app):
 def test_reset_accepts_backup_code_as_second_factor(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     assert _verify(c, token, _NEW_PW, u["backup_codes"][0]).status_code == 200
     with reset_app.app_context():
@@ -149,7 +148,7 @@ def test_reset_second_factor_is_rate_limited(require_db, reset_app):
 
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     # Hammer the step-up with wrong codes: early tries are 401 (bad code); once the
     # shared 5/min TOTP window fills, further tries are 429 (SR-11) — and this does
@@ -167,7 +166,7 @@ def test_reset_second_factor_is_rate_limited(require_db, reset_app):
 def test_reset_token_is_single_use(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
     # Re-using the same link after the password changed is rejected.
@@ -177,7 +176,7 @@ def test_reset_token_is_single_use(require_db, reset_app):
 def test_reset_weak_password_rejected_400(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
     assert _verify(c, token, "weak", _totp(u)).status_code == 400
     with reset_app.app_context():
         assert isinstance(login_password(email=u["email"], password=_PW, source_ip=_IP), str)
@@ -200,7 +199,7 @@ def test_verify_bad_token_400(require_db, reset_app):
 def test_reset_check_token(require_db, reset_app):
     u = _register_active(reset_app)
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
 
     def _valid(tok):
         return c.get(f"/auth/password/reset/check?token={tok}",
@@ -221,7 +220,7 @@ def test_request_is_rate_limited(require_db, reset_app):
     _outbox(reset_app).clear()
     for _ in range(Config.EMAIL_ACTION_LIMIT_PER_HOUR + 2):
         assert c.post("/auth/password/reset/request",
-                      json={"email": u["email"], "nric": u["nric"]},
+                      json={"email": u["email"], "nric": _NRIC},
                       base_url=_HTTPS).status_code == 200
     assert len(_to(reset_app, u["email"])) == Config.EMAIL_ACTION_LIMIT_PER_HOUR
 
@@ -230,7 +229,7 @@ def test_locked_account_can_reset_and_unlocks(require_db, reset_app):
     u = _register_active(reset_app)
     _lock(reset_app, u["email"])
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
     assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
     # Account is active again and the new password logs in.
     with reset_app.app_context():
@@ -247,7 +246,7 @@ def test_reset_revokes_existing_sessions(require_db, reset_app):
         sid = login_mfa(mfa_token=mfa, code=_totp(u), source_ip=_IP)
 
     c = reset_app.test_client()
-    token = _request_token(reset_app, c, u)
+    token = _request_token(reset_app, c, u["email"])
     assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
 
     # The pre-reset session is now revoked (SR-13).

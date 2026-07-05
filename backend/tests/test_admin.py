@@ -11,8 +11,7 @@ from sqlalchemy import select, text
 
 from app.blueprints.auth.login_service import InvalidCredentials, login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from app.security.masking import mask_nric
-from conftest import activate_signup_email, approve_account, unique_nric
+from conftest import activate_signup_email, approve_account
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.12"
@@ -34,9 +33,8 @@ def _email() -> str:
 
 def _register(app, role="customer") -> dict:
     email = _email()
-    nric = unique_nric()
     with app.app_context():
-        res = register_customer(full_name="Adm User", nric=nric, email=email,
+        res = register_customer(full_name="Adm User", nric="S1234567D", email=email,
                                 password=_PW, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
@@ -52,7 +50,7 @@ def _register(app, role="customer") -> dict:
                 s.commit()
             finally:
                 s.close()
-    return {"email": email, "nric": nric, "secret": secret, "user_id": str(res.user_id)}
+    return {"email": email, "secret": secret, "user_id": str(res.user_id)}
 
 
 def _client(app, creds):
@@ -131,8 +129,7 @@ def test_admin_reveal_nric_audited(require_db, admin_app, admin_client):
     r = admin_client.get(f"/admin/users/{target['user_id']}/nric", base_url=_HTTPS)
     assert r.status_code == 200
     body = r.get_json()
-    assert body["nric"] == target["nric"]
-    assert body["nric_masked"] == mask_nric(target["nric"])
+    assert body["nric"] == "S1234567D" and body["nric_masked"] == "S****567D"
     assert _audit_count(admin_app, event_type="NRIC_REVEAL",
                         target_user_id=target["user_id"]) == 1
 
