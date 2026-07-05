@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from '../../ui/notify.jsx';
 import { useNavigate } from 'react-router-dom';
 import { api } from "../../api/api";
 
@@ -14,7 +15,7 @@ export default function ForgotPassword() {
       await api.requestPasswordReset(recoveryData.email);
       setStep(2);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

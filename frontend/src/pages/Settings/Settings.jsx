@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from '../../ui/notify.jsx';
 import { api } from '../../api/api';
 
 export default function Settings() {
@@ -38,11 +39,11 @@ export default function Settings() {
     try {
       setIsSubmittingEmail(true);
       await api.requestEmailChange(newEmail, emailPassword);
-      alert("Verification link sent to your new email. A security alert has been sent to your current email.");
+      toast.success("Verification link sent to your new email. A security alert has been sent to your current email.");
       setNewEmail('');
       setEmailPassword('');
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsSubmittingEmail(false);
     }
@@ -52,16 +53,16 @@ export default function Settings() {
     e.preventDefault();
     if (isSubmittingPassword) return;
     if (passwordData.new !== passwordData.confirm) {
-      alert("New passwords do not match.");
+      toast.error("New passwords do not match.");
       return;
     }
     try {
       setIsSubmittingPassword(true);
       await api.changePassword(passwordData.current, passwordData.new);
-      alert("Password updated successfully.");
+      toast.success("Password updated successfully.");
       setPasswordData({ current: '', new: '', confirm: '' });
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsSubmittingPassword(false);
     }

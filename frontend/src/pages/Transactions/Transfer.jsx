@@ -1,4 +1,5 @@
 // Transfer.jsx
+import { toast } from '../../ui/notify.jsx';
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/api';
 
@@ -33,7 +34,7 @@ export default function Transfer() {
         }));
 
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       } finally {
         setLoading(false);
       }
@@ -69,11 +70,11 @@ export default function Transfer() {
         amount_cents,
         requiresPin ? transactionPin : null
       );
-      alert("Transfer initiated successfully.");
+      toast.success("Transfer initiated successfully.");
       setFormData({ ...formData, amount: '', reference: '', beneficiaryName: '', destinationAccount: '' });
       setTransactionPin('');
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setSubmitting(false);
     }

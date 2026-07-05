@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { api, setUnauthorizedHandler } from "./api/api";
+import { NotificationHost } from "./ui/notify.jsx";
 
 // Layouts
 import Layout from './components/Layout.jsx';
@@ -222,6 +223,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/login" replace />} />
 
       </Routes>
+      <NotificationHost />
     </Router>
   );
 }

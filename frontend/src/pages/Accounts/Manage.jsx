@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toast } from '../../ui/notify.jsx';
 import { api } from "../../api/api";
 
 export default function ManageAccount() {
@@ -13,7 +14,7 @@ export default function ManageAccount() {
         const response = await api.getAccounts();
         setAccounts(response.accounts);
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       }
     };
 
@@ -29,11 +30,11 @@ export default function ManageAccount() {
 
       setAccounts((prevAccounts) => [...prevAccounts, newAccount]);
 
-      alert(
+      toast.success(
         "Account opening requested. It will become available once an admin approves it."
       );
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -54,9 +55,9 @@ export default function ManageAccount() {
       setAccountToClose("");
       setTotpCode("");
 
-      alert("Account closure requested.");
+      toast.success("Account closure requested.");
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

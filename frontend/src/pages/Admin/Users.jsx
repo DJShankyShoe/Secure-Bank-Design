@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/api';
+import { toast, confirm, promptReason } from '../../ui/notify.jsx';
 
 export default function AdminUsers() {
   const [expandedUser, setExpandedUser] = useState(null);
@@ -17,7 +18,7 @@ export default function AdminUsers() {
       const res = await api.getUsers();
       setUsers(res.users || []);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -48,7 +49,7 @@ export default function AdminUsers() {
         const res = await api.getUserAccounts(userId);
         patchDetails(userId, { accounts: res.accounts || [] });
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       }
     }
   };
@@ -61,7 +62,7 @@ export default function AdminUsers() {
         const res = await api.getUserNric(userId);
         patchDetails(userId, { fullNric: res.nric });
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       }
     }
   };
@@ -70,9 +71,15 @@ export default function AdminUsers() {
     const suspend = currentStatus === 'active';
     let reason = true;
     if (suspend) {
-      reason = prompt('Enter reason for suspension:');
-      if (!reason) return;
-    } else if (!window.confirm('Reactivate this user?')) {
+      reason = await promptReason({
+        title: 'Suspend user',
+        message: 'Provide a reason for suspending this user.',
+        label: 'Reason',
+        danger: true,
+        confirmText: 'Suspend',
+      });
+      if (reason === null) return;
+    } else if (!(await confirm({ title: 'Reactivate user', message: 'Reactivate this user?' }))) {
       return;
     }
 
@@ -85,8 +92,9 @@ export default function AdminUsers() {
           u.user_id === userId ? { ...u, account_status: res.status } : u
         )
       );
+      toast.success(suspend ? 'User suspended.' : 'User reactivated.');
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -94,9 +102,15 @@ export default function AdminUsers() {
     const suspend = currentStatus === 'active';
     let reason = true;
     if (suspend) {
-      reason = prompt('Enter reason to suspend this account:');
-      if (!reason) return;
-    } else if (!window.confirm('Reactivate this account?')) {
+      reason = await promptReason({
+        title: 'Suspend account',
+        message: 'Provide a reason for suspending this account.',
+        label: 'Reason',
+        danger: true,
+        confirmText: 'Suspend',
+      });
+      if (reason === null) return;
+    } else if (!(await confirm({ title: 'Reactivate account', message: 'Reactivate this account?' }))) {
       return;
     }
 
@@ -109,8 +123,9 @@ export default function AdminUsers() {
           acc.account_id === accountId ? { ...acc, status: res.status } : acc
         ),
       });
+      toast.success(suspend ? 'Account suspended.' : 'Account reactivated.');
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/api';
+import { toast, confirm, promptReason } from '../../ui/notify.jsx';
 
 export default function AdminOpenings() {
   const [requests, setRequests] = useState([]);
@@ -17,7 +18,7 @@ export default function AdminOpenings() {
         .map((a) => ({ ...a, owner: userById[a.user_id] || {} }));
       setRequests(pending);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -30,16 +31,28 @@ export default function AdminOpenings() {
   const handleAction = async (accountId, action) => {
     try {
       if (action === 'approve') {
-        if (!window.confirm('Approve this account opening?')) return;
+        const ok = await confirm({
+          title: 'Approve account opening',
+          message: 'Approve this account opening request?',
+        });
+        if (!ok) return;
         await api.approveOpening(accountId);
+        toast.success('Account opening approved.');
       } else {
-        const reason = prompt('Reason for rejection?');
-        if (!reason) return;
+        const reason = await promptReason({
+          title: 'Reject account opening',
+          message: 'Provide a reason for rejecting this opening request.',
+          label: 'Reason',
+          danger: true,
+          confirmText: 'Reject',
+        });
+        if (reason === null) return;
         await api.rejectOpening(accountId, reason);
+        toast.success('Opening request rejected.');
       }
       setRequests((prev) => prev.filter((r) => r.account_id !== accountId));
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

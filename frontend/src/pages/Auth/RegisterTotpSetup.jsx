@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { toast } from '../../ui/notify.jsx';
 import { useLocation, useNavigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../../api/api";
@@ -34,7 +35,7 @@ export default function RegisterTotpSetup() {
     const cleanedCode = code.trim().replace(/\s/g, "");
 
     if (!/^\d{6}$/.test(cleanedCode)) {
-      alert("Please enter a valid 6-digit authenticator code.");
+      toast.error("Please enter a valid 6-digit authenticator code.");
       return;
     }
 
@@ -48,14 +49,14 @@ export default function RegisterTotpSetup() {
       // send the user to the verification page instead of a dead-end "log in".
       if (result?.status === "active") {
         sessionStorage.removeItem("securebank_pending_email");
-        alert("Setup complete. You can now log in.");
+        toast.success("Setup complete. You can now log in.");
         navigate("/login");
       } else {
         sessionStorage.setItem("securebank_pending_email", resolvedEmail);
         navigate("/verify-email", { state: { email: resolvedEmail } });
       }
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsVerifying(false);
     }

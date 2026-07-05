@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from '../../ui/notify.jsx';
 import { useNavigate } from 'react-router-dom';
 import { api } from "../../api/api";
 
@@ -19,7 +20,7 @@ export default function Register() {
   if (isRegistering) return;
 
   if (formData.password !== formData.confirmPassword) {
-    alert("Passwords do not match");
+    toast.error("Passwords do not match");
     return;
   }
 
@@ -50,7 +51,7 @@ export default function Register() {
     });
 
   } catch (err) {
-    alert(err.message);
+    toast.error(err.message);
   } finally {
     setIsRegistering(false);
   }

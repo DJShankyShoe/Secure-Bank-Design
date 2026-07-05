@@ -1,4 +1,5 @@
 // PayBill.jsx
+import { toast } from '../../ui/notify.jsx';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/api';
 
@@ -36,7 +37,7 @@ export default function PayBill() {
         }));
 
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       } finally {
         setLoading(false);
       }
@@ -71,10 +72,10 @@ export default function PayBill() {
         paymentData.billerId,
         amount_cents
       );
-      alert("Bill payment initiated successfully.");
+      toast.success("Bill payment initiated successfully.");
       setPaymentData({ ...paymentData, amount: '', date: '' });
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setSubmitting(false);
     }

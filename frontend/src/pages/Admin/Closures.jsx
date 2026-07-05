@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/api';
+import { toast, confirm, promptReason } from '../../ui/notify.jsx';
 
 export default function AdminClosures() {
   const [closures, setClosures] = useState([]);
@@ -16,7 +17,7 @@ export default function AdminClosures() {
         .map((a) => ({ ...a, owner: userById[a.user_id] || {} }));
       setClosures(pending);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
@@ -29,16 +30,28 @@ export default function AdminClosures() {
   const handleAction = async (accountId, action) => {
     try {
       if (action === 'approve') {
-        if (!window.confirm('Approve closure? The balance must be SGD 0.00.')) return;
+        const ok = await confirm({
+          title: 'Approve closure',
+          message: 'Approve this closure request? The balance must be SGD 0.00.',
+        });
+        if (!ok) return;
         await api.approveClosure(accountId);
+        toast.success('Closure approved.');
       } else {
-        const reason = prompt('Reason for rejection?');
-        if (!reason) return;
+        const reason = await promptReason({
+          title: 'Reject closure',
+          message: 'Provide a reason for rejecting this closure request.',
+          label: 'Reason',
+          danger: true,
+          confirmText: 'Reject',
+        });
+        if (reason === null) return;
         await api.rejectClosure(accountId, reason);
+        toast.success('Closure request rejected.');
       }
       setClosures((prev) => prev.filter((r) => r.account_id !== accountId));
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
