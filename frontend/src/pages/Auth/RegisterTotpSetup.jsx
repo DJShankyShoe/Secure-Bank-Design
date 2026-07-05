@@ -41,11 +41,19 @@ export default function RegisterTotpSetup() {
     try {
       setIsVerifying(true);
 
-      await api.verifyRegistrationTotp(resolvedEmail, cleanedCode);
+      const result = await api.verifyRegistrationTotp(resolvedEmail, cleanedCode);
 
-      sessionStorage.removeItem("securebank_pending_email");
-      alert("Authenticator setup successful. You can now log in.");
-      navigate("/login");
+      // Account only becomes usable once BOTH TOTP and the signup email are
+      // verified (either order). If it's still pending, the email step remains —
+      // send the user to the verification page instead of a dead-end "log in".
+      if (result?.status === "active") {
+        sessionStorage.removeItem("securebank_pending_email");
+        alert("Setup complete. You can now log in.");
+        navigate("/login");
+      } else {
+        sessionStorage.setItem("securebank_pending_email", resolvedEmail);
+        navigate("/verify-email", { state: { email: resolvedEmail } });
+      }
     } catch (err) {
       alert(err.message);
     } finally {

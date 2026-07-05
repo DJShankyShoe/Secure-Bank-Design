@@ -231,7 +231,7 @@ def test_verify_endpoint_totp_then_email(require_db, api_client):
     # Verify the signup email (token from the captured outbox) -> now 'active'.
     outbox = api_client.application.extensions.get("email_outbox", [])
     body = next(m["body"] for m in reversed(outbox)
-                if m["to"] == email and "verify-signup" in m["body"])
+                if m["to"] == email and "verify-email" in m["body"])
     token = body.split("token=")[1].split()[0]
     r3 = api_client.post("/auth/register/verify-email",
                          json={"token": token}, headers=_HTTPS)
@@ -304,8 +304,8 @@ def test_resend_signup_email_sends_a_new_link(require_db, api_client):
         headers=_HTTPS,
     )
     outbox = api_client.application.extensions.get("email_outbox", [])
-    before = sum(1 for m in outbox if m["to"] == email and "verify-signup" in m["body"])
+    before = sum(1 for m in outbox if m["to"] == email and "verify-email" in m["body"])
     r = api_client.post("/auth/register/resend-email", json={"email": email}, headers=_HTTPS)
     assert r.status_code == 200 and r.get_json()["status"] == "verification_email_sent"
-    after = sum(1 for m in outbox if m["to"] == email and "verify-signup" in m["body"])
+    after = sum(1 for m in outbox if m["to"] == email and "verify-email" in m["body"])
     assert after == before + 1

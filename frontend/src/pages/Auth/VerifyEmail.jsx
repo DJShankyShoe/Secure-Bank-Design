@@ -8,16 +8,28 @@ export default function VerifyEmail({ onVerificationComplete }) {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
 
+  const RESEND_COOLDOWN_SECONDS = 60;
+
   const [status, setStatus] = useState(token ? 'loading' : 'prompt');
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
+  const [cooldown, setCooldown] = useState(0);
 
-  // Prefill priority: navigation state (passed from Login) -> sessionStorage -> blank
-  const [email, setEmail] = useState(
+  // The account to verify is known from context (registration flow or a login
+  // redirect) — never chosen here. No free-text email entry.
+  const email =
     location.state?.email ||
     sessionStorage.getItem("securebank_pending_email") ||
-    ""
-  );
+    "";
+
+  // Client-side resend throttle: the backend is intentionally generic (it can't
+  // tell us it's rate-limited without leaking account existence), so we pace the
+  // button ourselves.
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   useEffect(() => {
     const verifyEmail = async () => {
@@ -40,9 +52,10 @@ export default function VerifyEmail({ onVerificationComplete }) {
 
   const handleResendEmail = async () => {
     if (!email) {
-      setResendMessage("Please enter your email address first.");
+      setResendMessage("Please log in first so we know which account to verify.");
       return;
     }
+    if (cooldown > 0 || isResending) return;
 
     setIsResending(true);
     setResendMessage('');
@@ -50,12 +63,15 @@ export default function VerifyEmail({ onVerificationComplete }) {
     try {
       await api.resendVerificationEmail(email);
       sessionStorage.setItem("securebank_pending_email", email);
-      setResendMessage("Verification email sent. Please check your inbox.");
+      setResendMessage("If your account still needs verifying, a new link is on its way. Please check your inbox.");
     } catch (err) {
       console.error(err);
-      setResendMessage("Unable to resend email. Please try again.");
+      setResendMessage("Unable to resend right now. Please try again shortly.");
     } finally {
       setIsResending(false);
+      // Start the cooldown regardless of the (generic) outcome, so repeated
+      // taps can't hammer the endpoint.
+      setCooldown(RESEND_COOLDOWN_SECONDS);
     }
   };
 
@@ -119,49 +135,40 @@ export default function VerifyEmail({ onVerificationComplete }) {
               <div>
                 <h2 style={{ fontSize: '2 rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Check Your Inbox</h2>
                 <p style={{ color: '#4B5563', margin: 0, fontSize: '1.05rem', lineHeight: '1.5' }}>
-                  Please complete email verification to activate your account. If you did not receive the email, you can resend it below.
+                  We've sent a verification link to your registered email address. Click it to activate
+                  your account. Didn't get it? You can resend it below.
                 </p>
               </div>
 
               <div style={{ width: '100%', marginTop: '8px' }}>
-                <input
-                  type="email"
-                  required
-                  placeholder="Enter your registered email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '14px 16px',
-                    border: '2px solid #E5E7EB',
-                    borderRadius: '8px',
-                    fontSize: '1rem',
-                    color: '#111827',
-                    outline: 'none',
-                    backgroundColor: '#F9FAFB',
-                    marginBottom: '12px',
-                    boxSizing: 'border-box'
-                  }}
-                />
-
-                <button
-                  onClick={handleResendEmail}
-                  disabled={isResending}
-                  style={{
-                    width: '100%',
-                    padding: '16px',
-                    backgroundColor: isResending ? '#F3F4F6' : '#111827',
-                    color: isResending ? '#9CA3AF' : '#FFFFFF',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '1.05rem',
-                    fontWeight: '700',
-                    cursor: isResending ? 'not-allowed' : 'pointer',
-                    transition: 'background-color 0.2s'
-                  }}
-                >
-                  {isResending ? 'Sending...' : 'Resend Verification Email'}
-                </button>
+                {(() => {
+                  const resendDisabled = isResending || cooldown > 0;
+                  const resendLabel = isResending
+                    ? 'Sending...'
+                    : cooldown > 0
+                      ? `Resend available in ${cooldown}s`
+                      : 'Resend Verification Email';
+                  return (
+                    <button
+                      onClick={handleResendEmail}
+                      disabled={resendDisabled}
+                      style={{
+                        width: '100%',
+                        padding: '16px',
+                        backgroundColor: resendDisabled ? '#F3F4F6' : '#111827',
+                        color: resendDisabled ? '#9CA3AF' : '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '1.05rem',
+                        fontWeight: '700',
+                        cursor: resendDisabled ? 'not-allowed' : 'pointer',
+                        transition: 'background-color 0.2s'
+                      }}
+                    >
+                      {resendLabel}
+                    </button>
+                  );
+                })()}
 
                 {resendMessage && (
                   <p style={{ color: '#059669', fontSize: '0.9rem', marginTop: '12px', fontWeight: '500' }}>

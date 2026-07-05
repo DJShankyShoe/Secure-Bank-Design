@@ -641,7 +641,7 @@ def send_signup_verification_email(*, user_id: uuid.UUID, email: str, source_ip:
         to=email,
         subject="Verify your SecureBank email",
         body=render_email("verify_signup_email.txt",
-                          verify_url=action_link("/verify-signup", token)),
+                          verify_url=action_link("/verify-email", token)),
     )
     emit_audit("SIGNUP_EMAIL_SENT", "success", source_ip=source_ip,
                actor_user_id=user_id, target_user_id=user_id)

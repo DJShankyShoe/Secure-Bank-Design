@@ -43,7 +43,7 @@ def activate_signup_email(app, email, source_ip="127.0.0.1"):
 
     outbox = app.extensions.get("email_outbox", [])
     msg = next(m for m in reversed(outbox)
-               if m["to"] == email and "verify-signup" in m["body"])
+               if m["to"] == email and "verify-email" in m["body"])
     token = msg["body"].split("token=")[1].split()[0]
     verify_signup_email(token=token, source_ip=source_ip)
 

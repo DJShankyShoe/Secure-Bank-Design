@@ -35,10 +35,10 @@ export default function Login({ onLoginSuccess }) {
           // Stash the email so the next page can prefill / resend to it
           sessionStorage.setItem("securebank_pending_email", credentials.email);
 
-          // NOTE: adjust this check to match whatever field your backend actually
-          // sends to distinguish "email not verified" vs "OTP/TOTP not completed".
-          // Common alternatives: err.data.reason, err.data.code, err.data.verification_type
-          if (err.data.reason === "otp_not_completed") {
+          // Backend reports which step is outstanding via two booleans.
+          // Finish TOTP enrolment first (if not yet confirmed), otherwise the
+          // remaining step is signup email verification.
+          if (!err.data.totp_confirmed) {
             navigate('/register/totp', { state: { email: credentials.email } });
           } else {
             navigate('/verify-email', { state: { email: credentials.email } });
