@@ -1,0 +1,22 @@
+title = "SecureBank gitleaks configuration"
+
+# Start from gitleaks' full default rule set, then allowlist known non-secrets so
+# the secret-scan reports only genuine leaks. Real production secrets are NEVER
+# committed — they are supplied at runtime via GitHub Actions secrets / server env.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secret constants and CI-only throwaway test credentials"
+regexTarget = "line"
+regexes = [
+  # itsdangerous serializer "salts" are token-namespace separators, NOT secrets.
+  # (The actual signing secret is FLASK_SECRET_KEY, injected from env at runtime.)
+  '''_(MFA_TOKEN|UNLOCK_TOKEN|RESET_TOKEN|SIGNUP_EMAIL)_SALT\s*=''',
+
+  # The CI workflow deliberately uses fake, non-production values for its ephemeral
+  # throwaway test database: a dummy 32-byte AES key (base64 of "0123...01") and a
+  # throwaway Flask secret. Neither is a production secret.
+  '''AES_ENCRYPTION_KEY:\s*MDEyMzQ1Njc4''',
+  '''FLASK_SECRET_KEY:\s*ci-only-secret-key''',
+]
