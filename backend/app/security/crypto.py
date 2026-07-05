@@ -11,8 +11,6 @@ Argon2 hashers MUST differ — enforced indirectly by the config params and test
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import os
 
 from argon2 import PasswordHasher
@@ -86,29 +84,6 @@ def verify_backup_code(stored_hash: str, code: str) -> bool:
         return _password_hasher.verify(stored_hash, code)
     except (VerifyMismatchError, InvalidHashError):
         return False
-
-
-# Domain-separation label so the blind-index subkey can never collide with any
-# other use of the AES key material.
-_NRIC_INDEX_LABEL = b"securebank|nric-blind-index|v1"
-
-
-def nric_blind_index(nric: str, key: bytes) -> bytes:
-    """Return a deterministic keyed blind index of an NRIC (SR-03, SR-06/FR-01).
-
-    NRIC is stored AES-256-GCM encrypted with a random nonce, so its ciphertext is
-    non-deterministic and cannot be uniqueness-checked directly. This HMAC-SHA256
-    index is deterministic (32 raw bytes), letting us enforce one-account-per-NRIC
-    (a UNIQUE column) and look a user up by NRIC without a full-table decrypt —
-    while never exposing the plaintext (the index is one-way and keyed). The subkey
-    is derived from the AES key with a domain-separation label, so it is independent
-    of the encryption use of that key. ``nric`` must already be normalised
-    (upper-cased by ``validate_nric``).
-    """
-    if len(key) != 32:
-        raise ValueError("AES key must be 32 bytes (AES-256).")
-    subkey = hashlib.sha256(_NRIC_INDEX_LABEL + key).digest()
-    return hmac.new(subkey, nric.encode("utf-8"), hashlib.sha256).digest()
 
 
 def aes_encrypt(plaintext: bytes | str, key: bytes) -> bytes:
