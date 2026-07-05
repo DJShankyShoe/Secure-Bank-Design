@@ -1,5 +1,6 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import SessionTimer from './SessionTimer.jsx';
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
@@ -42,7 +43,7 @@ export default function Layout({ onLogout }) {
           </div>
         </div>
         <div className="topbar-actions">
-          <p> Session expires in 11:42 </p>
+          <p><SessionTimer onExpire={onLogout} /></p>
           <button className="ghost-button" onClick={onLogout}>Log out</button>
         </div>
       </header>

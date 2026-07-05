@@ -14,6 +14,14 @@ export function setUnauthorizedHandler(fn) {
   onUnauthorized = fn;
 }
 
+// Called after each successful request — the server extends the session's idle
+// window on every request, so the UI can reset its "session expires in" countdown
+// off the same signal.
+let onActivity = null;
+export function setActivityHandler(fn) {
+  onActivity = fn;
+}
+
 /**
  * Get CSRF token
  */
@@ -87,6 +95,9 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
   if (data.csrf_token) {
     csrfToken = data.csrf_token;
   }
+
+  // Successful request → the server just refreshed the session's idle window.
+  if (onActivity) onActivity();
 
   return data;
 }

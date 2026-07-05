@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api/api';
+import SessionTimer from './SessionTimer.jsx';
 
 export default function AdminLayout({ onLogout }) {
   const navigate = useNavigate();
@@ -47,7 +48,7 @@ export default function AdminLayout({ onLogout }) {
           </div>
         </div>
         <div className="topbar-actions">
-          <p style={{ color: '#9CA3AF' }}> Session expires in 11:42 </p>
+          <p style={{ color: '#9CA3AF' }}><SessionTimer onExpire={onLogout} /></p>
           <button className="ghost-button" style={{ color: '#FCA5A5' }} onClick={onLogout}>Log out</button>
         </div>
       </header>
