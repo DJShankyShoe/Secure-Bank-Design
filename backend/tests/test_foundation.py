@@ -94,7 +94,12 @@ def test_security_headers_present(client):
     assert r.status_code == 200
     h = r.headers
     assert h["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
-    assert h["Content-Security-Policy"] == "default-src 'self'; script-src 'self'"
+    csp = h["Content-Security-Policy"]
+    # default-src/script-src plus the directives that do NOT fall back to
+    # default-src per the CSP spec (base-uri, form-action) + object-src (SR-04).
+    for directive in ("default-src 'self'", "script-src 'self'", "base-uri 'self'",
+                      "form-action 'self'", "object-src 'none'", "frame-ancestors 'none'"):
+        assert directive in csp
     assert h["X-Frame-Options"] == "DENY"
     assert h["X-Content-Type-Options"] == "nosniff"
     assert h["Referrer-Policy"] == "no-referrer"

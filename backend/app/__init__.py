@@ -63,7 +63,16 @@ def create_app(config: Optional[Config] = None) -> Flask:
         strict_transport_security_max_age=_HSTS_MAX_AGE,
         strict_transport_security_include_subdomains=True,
         session_cookie_secure=config.force_https,
-        content_security_policy={"default-src": "'self'", "script-src": "'self'"},
+        content_security_policy={
+            "default-src": "'self'",
+            "script-src": "'self'",
+            # base-uri and form-action do NOT fall back to default-src (CSP spec),
+            # so pin them explicitly; object-src 'none' blocks plugin vectors (SR-04).
+            "base-uri": "'self'",
+            "form-action": "'self'",
+            "object-src": "'none'",
+            "frame-ancestors": "'none'",
+        },
         referrer_policy="no-referrer",
         frame_options="DENY",
         x_content_type_options=True,

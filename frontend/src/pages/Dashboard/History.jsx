@@ -58,7 +58,6 @@ export default function History() {
     e.preventDefault();
 
     // Backend filtering can be added later
-    console.log(filters);
   };
 
   const activeAccounts = accounts.filter((account) => {

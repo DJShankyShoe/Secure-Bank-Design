@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -278,8 +279,21 @@ def test_login_notification_respects_preference(require_db, app):
         update_contact_preferences(user_id=u["user_id"], notify_on_login=False)
         outbox.clear()
         t2 = login_password(email=u["email"], password=u["password"], source_ip=_IP)
-        login_mfa(mfa_token=t2, code=pyotp.TOTP(u["secret"]).now(), source_ip=_IP)
+        # Second login in the same window needs a fresh time-step (single-use TOTP, SR-11).
+        login_mfa(mfa_token=t2, code=pyotp.TOTP(u["secret"]).at(time.time() + 30), source_ip=_IP)
         assert not any("sign-in" in m["body"] for m in outbox if m["to"] == u["email"])
+
+
+def test_login_totp_code_is_single_use(require_db, app):
+    # A TOTP code accepted once at login cannot be replayed within its window (SR-11).
+    u = _register_and_activate(app)
+    code = pyotp.TOTP(u["secret"]).now()
+    with app.app_context():
+        t1 = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        assert isinstance(login_mfa(mfa_token=t1, code=code, source_ip=_IP), str)  # first use ok
+        t2 = login_password(email=u["email"], password=u["password"], source_ip=_IP)
+        with pytest.raises(InvalidCredentials):        # replay of the same code -> rejected
+            login_mfa(mfa_token=t2, code=code, source_ip=_IP)
 
 
 def test_change_password_wrong_current_401(require_db, api_client, app):

@@ -31,6 +31,7 @@ from ...config import Config
 from ...extensions import db
 from ...models import MfaBackupCode, User
 from ...security import crypto, lockout
+from ...security.mfa import verify_totp_and_consume
 from ...security.sessions import create_session, revoke_user_sessions
 from ...security.validation import (
     ValidationError,
@@ -267,10 +268,8 @@ def login_mfa(*, mfa_token: str, code: str, source_ip: str) -> str:
 
         verified = False
         method = None
-        if code and _SIX_DIGITS.match(code) and user.totp_seed_encrypted is not None:
-            seed = crypto.aes_decrypt(user.totp_seed_encrypted, _aes_key()).decode("utf-8")
-            if pyotp.TOTP(seed).verify(code, valid_window=1):
-                verified, method = True, "totp"
+        if code and _SIX_DIGITS.match(code) and verify_totp_and_consume(user, code, _aes_key()):
+            verified, method = True, "totp"  # single-use: consumes the TOTP step (SR-11)
         if not verified and code and _consume_backup_code(session, user.user_id, code):
             verified, method = True, "backup_code"
 

@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from ..config import Config
@@ -27,6 +27,22 @@ from ..models import AuthAttempt, User
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _serialize_window(session: Session, user_id: uuid.UUID, attempt_type: str) -> None:
+    """Take a transaction-scoped advisory lock for this ``(user, attempt_type)``.
+
+    The rate-limit windows are enforced by COUNT-then-INSERT; under READ COMMITTED
+    concurrent requests could each read a sub-threshold count and all proceed
+    (TOCTOU), bursting past the limit. Acquiring this lock at the start of the
+    check serialises the whole count→record→commit for the same key, so a blocked
+    request sees the just-recorded attempt. The lock auto-releases at commit/rollback
+    and is keyed per (user, type), so unrelated accounts never contend (SR-11/12).
+    """
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+        {"k": f"ratelimit:{user_id}:{attempt_type}"},
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +83,7 @@ def _count_attempts(
 
 def is_totp_rate_limited(session: Session, user_id: uuid.UUID) -> bool:
     """True if TOTP attempts in the last minute meet/exceed the limit (SR-11, 5/min)."""
+    _serialize_window(session, user_id, "totp")
     window = _now() - timedelta(minutes=1)
     return _count_attempts(session, user_id, "totp", since=window) >= Config.TOTP_RATE_LIMIT_PER_MIN
 
@@ -75,6 +92,7 @@ def is_pin_rate_limited(
     session: Session, user_id: uuid.UUID, transaction_ref: str
 ) -> bool:
     """True if PIN attempts breach either window (SR-12: 3/transaction or 5/hour)."""
+    _serialize_window(session, user_id, "pin")
     per_txn = _count_attempts(session, user_id, "pin", transaction_ref=transaction_ref)
     if per_txn >= Config.PIN_ATTEMPTS_PER_TXN:
         return True
@@ -89,6 +107,7 @@ def is_email_action_rate_limited(session: Session, user_id: uuid.UUID) -> bool:
     quota / sender-reputation protection). Caller records the attempt via
     ``record_auth_attempt(..., "email")``.
     """
+    _serialize_window(session, user_id, "email")
     hour = _now() - timedelta(hours=1)
     count = _count_attempts(session, user_id, "email", since=hour)
     return count >= Config.EMAIL_ACTION_LIMIT_PER_HOUR

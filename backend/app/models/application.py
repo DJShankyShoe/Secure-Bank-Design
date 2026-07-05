@@ -72,6 +72,8 @@ class User(Base):
         Integer, nullable=False, server_default=text("0")
     )
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Last TOTP time-step consumed at login — single-use replay protection (SR-11).
+    last_totp_timestep: Mapped[Optional[int]] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

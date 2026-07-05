@@ -32,8 +32,6 @@ export default function Register() {
       formData.password
     );
 
-    console.log(response);
-
     /*
       Backend returns:
       {

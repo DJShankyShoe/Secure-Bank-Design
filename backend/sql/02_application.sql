@@ -24,6 +24,7 @@ CREATE TABLE application.users (
                                                                 -- locked=brute-force (SR-09); suspended=admin (FR-08)
   failed_login_count    integer      NOT NULL DEFAULT 0,        -- reset on success (SR-09)
   locked_until          timestamptz,                            -- NULL when not locked (SR-09)
+  last_totp_timestep    bigint,                                 -- last consumed TOTP step at login (SR-11)
   created_at            timestamptz  NOT NULL DEFAULT NOW(),
   updated_at            timestamptz  NOT NULL DEFAULT NOW()
 );
