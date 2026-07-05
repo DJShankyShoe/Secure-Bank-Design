@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { api } from "./api/api";
 
@@ -54,6 +54,29 @@ export default function App() {
     pinSetupCompleted: true   // ✅ FIXED: this is BANK PIN, NOT OTP
   });
 
+  // Until we've asked the backend whether a session already exists, we don't know
+  // if the user is logged in — hold rendering so we don't flash the login page.
+  const [authReady, setAuthReady] = useState(false);
+
+  // On load, restore the session from the server-side cookie (if any) so a refresh
+  // or a direct visit to /login correctly recognises an already-logged-in user.
+  useEffect(() => {
+    api.me()
+      .then((profile) => {
+        sessionStorage.setItem("securebank_user", JSON.stringify(profile));
+        setAuth({
+          isAuthenticated: true,
+          role: profile.role,
+          emailVerified: profile.email_verified ?? true,
+          pinSetupCompleted: true
+        });
+      })
+      .catch(() => {
+        // No valid session (401) — stay logged out.
+      })
+      .finally(() => setAuthReady(true));
+  }, []);
+
   const handleLogout = async () => {
     try {
       await api.logout();
@@ -78,6 +101,14 @@ export default function App() {
       pinSetupCompleted
     });
   };
+
+  if (!authReady) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#6B7280' }}>
+        Loading...
+      </div>
+    );
+  }
 
   return (
     <Router>

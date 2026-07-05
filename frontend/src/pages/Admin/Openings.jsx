@@ -1,16 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from '../../api/api';
 
 export default function AdminOpenings() {
-  const [requests, setRequests] = useState([
-    { id: 'req_301', name: 'Alice Lim', nric: 'T****889C', type: 'savings', requestedAt: '2026-05-24 09:30:00' }
-  ]);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const handleAction = (reqId, action) => {
-    if (action === 'approve' && !window.confirm("Approve account?")) return;
-    if (action === 'reject' && !prompt("Reason for rejection?")) return;
-    
-    // TODO (Backend): POST /admin/accounts/requests/{id}/{approve|reject}
-    setRequests(requests.filter(r => r.id !== reqId));
+  const load = async () => {
+    setLoading(true);
+    try {
+      // No dedicated "pending openings" endpoint: pull all accounts, keep the
+      // open_requested ones, and join owner details from the user directory.
+      const [accRes, userRes] = await Promise.all([api.getAdminAccounts(), api.getUsers()]);
+      const userById = Object.fromEntries((userRes.users || []).map((u) => [u.user_id, u]));
+      const pending = (accRes.accounts || [])
+        .filter((a) => a.status === 'open_requested')
+        .map((a) => ({ ...a, owner: userById[a.user_id] || {} }));
+      setRequests(pending);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const handleAction = async (accountId, action) => {
+    try {
+      if (action === 'approve') {
+        if (!window.confirm('Approve this account opening?')) return;
+        await api.approveOpening(accountId);
+      } else {
+        const reason = prompt('Reason for rejection?');
+        if (!reason) return;
+        await api.rejectOpening(accountId, reason);
+      }
+      setRequests((prev) => prev.filter((r) => r.account_id !== accountId));
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
@@ -20,20 +50,27 @@ export default function AdminOpenings() {
         <thead>
           <tr style={{ borderBottom: '2px solid #E5E7EB', color: '#4B5563' }}>
             <th style={{ padding: '12px 8px' }}>Applicant</th>
+            <th style={{ padding: '12px 8px' }}>Account Number</th>
             <th style={{ padding: '12px 8px' }}>Requested Type</th>
-            <th style={{ padding: '12px 8px' }}>Date</th>
             <th style={{ padding: '12px 8px', textAlign: 'right' }}>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {requests.map(req => (
-            <tr key={req.id} style={{ borderBottom: '1px solid #E5E7EB' }}>
-              <td style={{ padding: '12px 8px' }}><strong>{req.name}</strong><br/><span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{req.nric}</span></td>
-              <td style={{ padding: '12px 8px', textTransform: 'capitalize' }}>{req.type}</td>
-              <td style={{ padding: '12px 8px', color: '#6B7280' }}>{req.requestedAt}</td>
+          {loading ? (
+            <tr><td colSpan="4" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>Loading...</td></tr>
+          ) : requests.length === 0 ? (
+            <tr><td colSpan="4" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>No pending opening requests.</td></tr>
+          ) : requests.map((req) => (
+            <tr key={req.account_id} style={{ borderBottom: '1px solid #E5E7EB' }}>
+              <td style={{ padding: '12px 8px' }}>
+                <strong>{req.owner.full_name || '—'}</strong><br />
+                <span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{req.owner.nric_masked || req.owner.email || ''}</span>
+              </td>
+              <td style={{ padding: '12px 8px', fontFamily: 'monospace' }}>{req.account_number}</td>
+              <td style={{ padding: '12px 8px', textTransform: 'capitalize' }}>{req.account_type}</td>
               <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                <button onClick={() => handleAction(req.id, 'approve')} style={{ color: '#059669', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', marginRight: '16px' }}>Approve</button>
-                <button onClick={() => handleAction(req.id, 'reject')} style={{ color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}>Reject</button>
+                <button onClick={() => handleAction(req.account_id, 'approve')} style={{ color: '#059669', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', marginRight: '16px' }}>Approve</button>
+                <button onClick={() => handleAction(req.account_id, 'reject')} style={{ color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}>Reject</button>
               </td>
             </tr>
           ))}

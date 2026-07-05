@@ -104,6 +104,8 @@ def create():
         )
     except ValidationError as exc:
         return jsonify(error=exc.message), 400
+    except AccountActionError as exc:
+        return jsonify(error=exc.message), exc.status
     return jsonify(account), 201
 
 

@@ -66,7 +66,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /auth/password/reset/request` | Public | Email a reset link (needs email **+ NRIC**) |
 | `GET /auth/password/reset/check` | Public | Is a reset token still valid? (call on page load) |
 | `POST /auth/password/reset/verify` | Token | Set a new password (token + TOTP) |
-| `POST /accounts` | Auth | Request a new account (→ `open_requested`, needs admin approval) |
+| `POST /accounts` | Auth | Request a new account (→ `open_requested`, needs admin approval; `409` if one is already pending) |
 | `GET /accounts` | Auth | List own accounts |
 | `GET /accounts/{id}` | Auth | View one account |
 | `GET /accounts/{id}/transactions` | Auth | Paginated, filterable history |
@@ -260,11 +260,15 @@ On success **all existing sessions are revoked** and any lockout is cleared. The
 
 ### `POST /accounts`  — **request** a new account (needs admin approval)
 The account is created **frozen** (`open_requested`) and can't transact until an admin approves it.
+Only **one opening request may be pending at a time**: while an `open_requested` account
+exists, a second request returns `409`. Request again once it is approved or rejected.
 ```jsonc
 { "account_type": "savings" }               // or "current"
 // 201
 { "account_id": "uuid", "account_number": "0123456789", "account_type": "savings",
   "balance_cents": 0, "status": "open_requested", "created_at": "..." }
+// 409  — an opening request is already awaiting approval
+{ "error": "You already have an account opening request awaiting approval." }
 ```
 An admin then approves (→ `active`) or rejects (→ `closed`) — see the admin endpoints.
 

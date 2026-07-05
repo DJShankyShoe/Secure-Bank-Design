@@ -43,7 +43,7 @@ export default function Transfer() {
   }, []);
 
   const formatAccountLabel = (account) =>
-    `${account.account_type} • ****${account.account_number.slice(-4)}`;
+    `${account.account_type} • ${account.account_number}`;
 
   // Strict Currency Validator
   const handleAmountChange = (e) => {

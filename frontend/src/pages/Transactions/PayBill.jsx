@@ -46,7 +46,7 @@ export default function PayBill() {
   }, []);
 
   const formatAccountLabel = (account) =>
-    `${account.account_type} • ****${account.account_number.slice(-4)}`;
+    `${account.account_type} • ${account.account_number}`;
 
   const selectedBiller = billers.find((b) => b.biller_id === paymentData.billerId);
   const selectedAccount = accounts.find((a) => a.account_number === paymentData.sourceAccount);

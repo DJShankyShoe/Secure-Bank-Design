@@ -30,7 +30,7 @@ export default function ManageAccount() {
       setAccounts((prevAccounts) => [...prevAccounts, newAccount]);
 
       alert(
-        `Account created successfully!\nAccount Number: ${newAccount.account_number}`
+        "Account opening requested. It will become available once an admin approves it."
       );
     } catch (err) {
       alert(err.message);
@@ -60,6 +60,11 @@ export default function ManageAccount() {
     }
   };
 
+  // Only one opening request may be pending admin approval at a time (FR-02).
+  const pendingOpen = accounts.find(
+    (account) => String(account.status || "").toLowerCase() === "open_requested"
+  );
+
   const activeAccounts = accounts.filter((account) => {
     const status = String(account.status || "").toLowerCase();
 
@@ -67,6 +72,7 @@ export default function ManageAccount() {
       status !== "closed" &&
       status !== "inactive" &&
       status !== "close_requested" &&
+      status !== "open_requested" &&
       !account.closed_at &&
       account.is_closed !== true
     );
@@ -87,28 +93,37 @@ export default function ManageAccount() {
         <div className="content-card">
           <h3 className="card-title">Open New Account</h3>
           <p className="helper-text" style={{ marginBottom: "16px" }}>
-            Select the type of account you wish to open. The opening balance will be SGD 0.00.
+            Request a new account. Opening requires admin approval; the opening balance
+            will be SGD 0.00.
           </p>
 
-          <form onSubmit={handleOpenAccount} className="form-grid">
-            <div className="field">
-              <label>Account Type</label>
-              <select
-                required
-                value={accountType}
-                onChange={(e) => setAccountType(e.target.value)}
-              >
-                <option value="savings">Savings Account</option>
-                <option value="current">Current Account</option>
-              </select>
+          {pendingOpen ? (
+            <div className="inline-note" style={{ marginTop: "4px" }}>
+              You have an account opening request ({pendingOpen.account_type} ·{" "}
+              {pendingOpen.account_number}) awaiting admin approval. You can request
+              another account once it is approved.
             </div>
+          ) : (
+            <form onSubmit={handleOpenAccount} className="form-grid">
+              <div className="field">
+                <label>Account Type</label>
+                <select
+                  required
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value)}
+                >
+                  <option value="savings">Savings Account</option>
+                  <option value="current">Current Account</option>
+                </select>
+              </div>
 
-            <div className="hero-actions" style={{ marginTop: "10px" }}>
-              <button type="submit" className="primary-button">
-                Open Account
-              </button>
-            </div>
-          </form>
+              <div className="hero-actions" style={{ marginTop: "10px" }}>
+                <button type="submit" className="primary-button">
+                  Request Account Opening
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         <div className="content-card">

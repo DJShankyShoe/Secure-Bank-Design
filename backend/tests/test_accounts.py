@@ -10,7 +10,7 @@ import pytest
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from conftest import activate_signup_email
+from conftest import activate_signup_email, approve_account
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.4"
@@ -71,7 +71,10 @@ def test_create_account_requires_auth_401(require_db, acc_app):
 
 def test_list_accounts(require_db, acc_app):
     c = _logged_in_client(acc_app)
-    c.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS)
+    # Only one opening may be pending at a time (FR-02) — approve before the next.
+    first = c.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    with acc_app.app_context():
+        approve_account(first["account_id"])
     c.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS)
     r = c.get("/accounts", base_url=_HTTPS)
     assert r.status_code == 200
@@ -85,10 +88,28 @@ def test_account_numbers_unique_and_numeric(require_db, acc_app):
     nums = set()
     for _ in range(5):
         r = c.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS)
-        n = r.get_json()["account_number"]
+        body = r.get_json()
+        n = body["account_number"]
         assert len(n) == 10 and n.isdigit()
         nums.add(n)
+        # Clear the pending opening so the next request isn't blocked (FR-02).
+        with acc_app.app_context():
+            approve_account(body["account_id"])
     assert len(nums) == 5  # all distinct
+
+
+def test_second_open_request_blocked_while_pending_409(require_db, acc_app):
+    c = _logged_in_client(acc_app)
+    r1 = c.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS)
+    assert r1.status_code == 201
+    # A second request while the first awaits approval is rejected (FR-02).
+    r2 = c.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS)
+    assert r2.status_code == 409
+    # Once the pending one is approved, a new request is allowed again.
+    with acc_app.app_context():
+        approve_account(r1.get_json()["account_id"])
+    r3 = c.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS)
+    assert r3.status_code == 201
 
 
 def test_view_own_account_200(require_db, acc_app):

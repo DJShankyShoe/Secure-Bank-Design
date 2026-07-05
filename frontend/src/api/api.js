@@ -333,9 +333,49 @@ export const api = {
       method: "GET",
     }),
 
-  getAuditLogs: (page = 1) =>
-    request(`/admin/audit?page=${page}`, {
+  getAuditLogs: (page = 1, type = "", user = "") => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (type) params.set("type", type);
+    if (user) params.set("user", user);
+    return request(`/admin/audit?${params.toString()}`, { method: "GET" });
+  },
+
+  getUserAccounts: (userId) =>
+    request(`/admin/users/${userId}/accounts`, {
       method: "GET",
+    }),
+
+  approveOpening: (accountId) =>
+    request(`/admin/accounts/${accountId}/opening/approve`, {
+      method: "POST",
+    }),
+
+  rejectOpening: (accountId, reason) =>
+    request(`/admin/accounts/${accountId}/opening/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  approveClosure: (accountId) =>
+    request(`/admin/accounts/${accountId}/closure/approve`, {
+      method: "POST",
+    }),
+
+  rejectClosure: (accountId, reason) =>
+    request(`/admin/accounts/${accountId}/closure/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  suspendAccount: (accountId, reason) =>
+    request(`/admin/accounts/${accountId}/suspend`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  unsuspendAccount: (accountId) =>
+    request(`/admin/accounts/${accountId}/unsuspend`, {
+      method: "POST",
     }),
 
   suspendUser: (userId, reason) =>

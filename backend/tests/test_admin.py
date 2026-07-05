@@ -292,7 +292,8 @@ def test_admin_unsuspend_active_account_404(require_db, admin_app, admin_client)
 def test_admin_lists_one_users_accounts(require_db, admin_app, admin_client):
     target = _register(admin_app)
     cust = _client(admin_app, target)
-    cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS)
+    first = cust.post("/accounts", json={"account_type": "savings"}, base_url=_HTTPS).get_json()
+    approve_account(first["account_id"])  # FR-02: only one opening pending at a time
     cust.post("/accounts", json={"account_type": "current"}, base_url=_HTTPS)
     r = admin_client.get(f"/admin/users/{target['user_id']}/accounts", base_url=_HTTPS)
     assert r.status_code == 200

@@ -56,6 +56,11 @@ class StepUpRateLimited(AccountActionError):
     message = "Too many attempts. Please try again later."
 
 
+class PendingOpenExists(AccountActionError):
+    status = 409
+    message = "You already have an account opening request awaiting approval."
+
+
 _DIGITS = "0123456789"
 _MAX_NUMBER_ATTEMPTS = 5
 
@@ -92,6 +97,17 @@ def create_account(*, user_id: uuid.UUID, account_type: str, source_ip: str) -> 
 
     session = db.app_session()
     try:
+        # One pending opening at a time: block a new request while an earlier one
+        # is still awaiting admin approval (FR-02).
+        pending = session.execute(
+            select(Account.account_id).where(
+                Account.user_id == user_id,
+                Account.status == "open_requested",
+            )
+        ).first()
+        if pending is not None:
+            raise PendingOpenExists()
+
         account: Optional[Account] = None
         for _ in range(_MAX_NUMBER_ATTEMPTS):
             candidate = Account(
