@@ -24,7 +24,7 @@ export default function SetupPin({ onSetupComplete }) {
 
     setSubmitting(true);
     try {
-      // persist the PIN via the API instead of console.log
+      // persist the PIN via the API instead of console.log.
       // Backend is responsible for hashing (Argon2id/bcrypt) and setting
       // requires_pin_setup = false / pin_setup_completed = true in the DB.
       await api.setTransactionPin(pinData.pin);

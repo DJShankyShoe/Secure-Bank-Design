@@ -295,7 +295,7 @@ export const api = {
   // TRANSACTIONS
   // =========================
 
-  // ✅ NEW: check whether the user already has a transaction PIN set.
+  // check whether the user already has a transaction PIN set.
   // Per backend spec: GET /transactions/pin → { pin_set: true/false }
   getPinStatus: () =>
     request("/transactions/pin", {

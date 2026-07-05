@@ -65,7 +65,7 @@ export default function App() {
       .then(async (profile) => {
         sessionStorage.setItem("securebank_user", JSON.stringify(profile));
 
-        // ✅ PIN status comes from its own endpoint, not /auth/me.
+        // PIN status comes from its own endpoint, not /auth/me.
         // GET /transactions/pin -> { pin_set: true/false }
         let pinSetupCompleted = false;
         try {
