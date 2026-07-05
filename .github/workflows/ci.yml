@@ -1,5 +1,16 @@
 name: CI
 
+# ---------------------------------------------------------------------------
+# Pipeline security follows the OWASP CI/CD Security Cheat Sheet:
+#   * Least-privilege GITHUB_TOKEN — deny-by-default `permissions: contents: read`
+#     at the top level; jobs opt into more only if they need it (none do here).
+#   * Third-party actions pinned to a full commit SHA (not a moving tag/branch),
+#     with the human-readable version in a trailing comment.
+#   * Untrusted event input is never interpolated into `run:` shell (injection).
+#   * SAST (Bandit + Semgrep), SCA (Dependency-Check + npm audit) and secret
+#     scanning (Gitleaks) run in the pipeline.
+# ---------------------------------------------------------------------------
+
 on:
   push:
     branches:
@@ -15,6 +26,10 @@ on:
 
   workflow_dispatch:        # manual "Run workflow" button (also runs the deploy gate)
 
+# Deny-by-default token scope for every job (OWASP: least privilege).
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Frontend Build
@@ -28,10 +43,10 @@ jobs:
 
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
         with:
           node-version: "20"
           cache: npm
@@ -43,11 +58,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Security audit (npm)
+      - name: Security audit (npm)          # SCA for JS dependencies
         run: npm audit --audit-level=high
 
       - name: Upload frontend artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
         with:
           name: frontend-dist
           path: frontend/dist
@@ -56,6 +71,8 @@ jobs:
   backend:
     name: Backend Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     services:
       postgres:
@@ -87,10 +104,10 @@ jobs:
 
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.12"
 
@@ -122,13 +139,17 @@ jobs:
   dependency-check:
     name: Dependency Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
+      # SCA for Python deps. Pinned to a release SHA (was @main — a mutable
+      # branch, which the OWASP cheat sheet flags as a supply-chain risk).
       - name: OWASP Dependency Check
-        uses: dependency-check/Dependency-Check_Action@main
+        uses: dependency-check/Dependency-Check_Action@75ba02d6183445fe0761d26e836bde58b1560600  # 1.1.0
         with:
           project: SecureBank-Backend
           path: backend
@@ -139,24 +160,197 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
         with:
           name: dependency-check-report
           path: ${{ github.workspace }}/reports
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # NON-BLOCKING for now: Semgrep runs and uploads its findings, but does not
+    # fail the build yet (avoids surprise red on first introduction). Delete the
+    # `continue-on-error` line below to make OWASP findings gate the pipeline.
+    continue-on-error: true
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: pip install semgrep==1.97.0
+
+      # Rulesets cover OWASP Top Ten plus language-specific checks for the Python
+      # backend and the JavaScript/React frontend. --error sets a non-zero exit on
+      # findings (which the job-level continue-on-error currently swallows).
+      - name: Semgrep scan (OWASP Top Ten + Python + JavaScript)
+        run: >-
+          semgrep scan
+          --config p/owasp-top-ten
+          --config p/python
+          --config p/javascript
+          --error
+          --sarif --output semgrep.sarif
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # NON-BLOCKING for now: scans the full git history for committed secrets and
+    # reports, but does not fail the build yet. Delete `continue-on-error` to make
+    # a detected secret fail the pipeline. Gitleaks CLI is MIT-licensed (no key
+    # needed for a personal repo); pinned to an immutable image tag.
+    continue-on-error: true
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0        # full history so Gitleaks can scan every commit
+
+      - name: Gitleaks (detect committed secrets)
+        run: >-
+          docker run --rm -v "${{ github.workspace }}:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.21.2
+          detect --source=/repo --redact -v
+
+  dast:
+    name: DAST (OWASP ZAP baseline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # NON-BLOCKING: boots the backend and runs a ZAP baseline scan against its
+    # public surface — headers, CSP, cookie flags, info leaks (OWASP A05 Security
+    # Misconfiguration). Delete `continue-on-error` to gate. This is an
+    # UNAUTHENTICATED baseline: it does not deep-scan the auth-gated endpoints.
+    continue-on-error: true
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      FLASK_SECRET_KEY: ci-only-secret-key
+      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
+      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
+      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
+      SMTP_HOST: localhost
+      SMTP_PORT: "587"
+      SMTP_FROM: no-reply@securebank.example
+      TOTP_ISSUER: SecureBank
+      FORCE_HTTPS: "false"            # serve plain HTTP so ZAP isn't redirected to https
+      CLEANUP_INTERVAL_SECONDS: "0"   # no background prune thread during the scan
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime deps + gunicorn
+        run: |
+          pip install -r requirements.txt
+          pip install "gunicorn==23.0.0"
+
+      - name: Apply schema, roles and grants
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
+          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
+          done
+          psql -h localhost -U postgres -d securebank_ci -c \
+            "ALTER ROLE app_user PASSWORD 'app_pw'; \
+             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
+             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
+
+      - name: Boot the app (gunicorn, background)
+        run: |
+          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 2 \
+            --timeout 60 > "$GITHUB_WORKSPACE/gunicorn.log" 2>&1 &
+          echo "waiting for /healthz ..."
+          for i in $(seq 1 30); do
+            if curl -fsS -m 3 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "app up after $((i-1))s"; break
+            fi
+            sleep 1
+          done
+          curl -fsS -m 3 http://127.0.0.1:8000/healthz \
+            || { echo "app did not boot:"; cat "$GITHUB_WORKSPACE/gunicorn.log"; exit 1; }
+
+      # ZAP runs with --network host so localhost:8000 reaches the app on the runner.
+      # Image tag 'stable' is mutable; pin to a digest for strict supply-chain control.
+      - name: ZAP baseline scan
+        working-directory: ${{ github.workspace }}
+        continue-on-error: true
+        run: |
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --rm --network host \
+            -v "${{ github.workspace }}/zap-out:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 \
+              -r zap-report.html -w zap-report.md -J zap-report.json || true
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: zap-baseline-report
+          path: zap-out
 
   # ---------------------------------------------------------------------------
   # CD — deploy to the EC2 host, but ONLY after CI passes.
   #   * needs: [frontend, backend]  -> runs only if both went green (the gate).
   #   * if:    only on a push/manual-run of the integration-test branch
   #            (so pushes to production/Frontend/backend and all PRs never deploy).
+  #   * The script uses only repo `secrets.*` (never untrusted event input), so
+  #     there is no script-injection surface (OWASP CI/CD).
   # Required repo secrets: EC2_HOST, EC2_USERNAME, EC2_SSH_KEY.
   # Server prereqs (one-time, not done here): repo cloned at ~/Secure-Bank-Design,
   # backend/.env + DB provisioned, ssh user in the `docker` group, CF tunnel up.
+  # NOTE (optional hardening): to require manual approval before a production
+  # deploy, add `environment: production` to this job and configure required
+  # reviewers under Settings -> Environments (see SETTINGS_CHECKLIST.md).
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
     needs: [frontend, backend]
+    permissions:
+      contents: read
     if: >-
       github.ref == 'refs/heads/integration-test' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -168,7 +362,7 @@ jobs:
 
     steps:
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
