@@ -11,9 +11,12 @@ export default function Register() {
     password: '',
     confirmPassword: ''
   });
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const handleSubmit = async (e) => {
   e.preventDefault();
+
+  if (isRegistering) return;
 
   if (formData.password !== formData.confirmPassword) {
     alert("Passwords do not match");
@@ -21,6 +24,7 @@ export default function Register() {
   }
 
   try {
+    setIsRegistering(true);
     const response = await api.register(
       formData.fullName,
       formData.nric,
@@ -49,6 +53,8 @@ export default function Register() {
 
   } catch (err) {
     alert(err.message);
+  } finally {
+    setIsRegistering(false);
   }
 };
 
@@ -94,7 +100,7 @@ export default function Register() {
               </div>
               
               <div className="hero-actions login-actions" style={{ marginTop: '20px' }}>
-                <button type="submit" className="primary-button">Register</button>
+                <button type="submit" className="primary-button" disabled={isRegistering}>{isRegistering ? "Registering..." : "Register"}</button>
                 <button type="button" className="ghost-button" onClick={() => navigate('/login')}>Back to Login</button>
               </div>
             </form>
