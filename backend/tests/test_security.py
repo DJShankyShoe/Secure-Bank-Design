@@ -95,6 +95,31 @@ def test_aes_rejects_non_256_key():
 
 
 # --------------------------------------------------------------------------- #
+# NRIC blind index (SR-03, FR-01 one-account-per-NRIC)
+# --------------------------------------------------------------------------- #
+
+def test_nric_blind_index_is_deterministic():
+    key = os.urandom(32)
+    assert crypto.nric_blind_index("S1234567D", key) == crypto.nric_blind_index("S1234567D", key)
+
+
+def test_nric_blind_index_differs_by_nric_and_key():
+    key = os.urandom(32)
+    # Different NRIC -> different index.
+    assert crypto.nric_blind_index("S1234567D", key) != crypto.nric_blind_index("S7654321A", key)
+    # Same NRIC, different key -> different index (it is keyed, not a bare hash).
+    assert crypto.nric_blind_index("S1234567D", key) != crypto.nric_blind_index(
+        "S1234567D", os.urandom(32))
+
+
+def test_nric_blind_index_shape_and_key_length():
+    idx = crypto.nric_blind_index("S1234567D", os.urandom(32))
+    assert isinstance(idx, bytes) and len(idx) == 32  # HMAC-SHA256 digest
+    with pytest.raises(ValueError):
+        crypto.nric_blind_index("S1234567D", os.urandom(16))
+
+
+# --------------------------------------------------------------------------- #
 # NRIC masking (SR-03)
 # --------------------------------------------------------------------------- #
 

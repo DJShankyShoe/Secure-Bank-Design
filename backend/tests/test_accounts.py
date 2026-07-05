@@ -10,7 +10,7 @@ import pytest
 
 from app.blueprints.auth.login_service import login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
-from conftest import activate_signup_email, approve_account
+from conftest import activate_signup_email, approve_account, unique_nric
 
 _HTTPS = "https://localhost"
 _IP = "203.0.113.4"
@@ -33,7 +33,7 @@ def _logged_in_client(app):
     """Register + activate a user and return a client with its session cookie set."""
     email, password = _email(), "Str0ng!Passw0rd"
     with app.app_context():
-        res = register_customer(full_name="Acc User", nric="S1234567D", email=email,
+        res = register_customer(full_name="Acc User", nric=unique_nric(), email=email,
                                 password=password, source_ip=_IP)
         secret = parse_qs(urlparse(res.provisioning_uri).query)["secret"][0]
         confirm_totp_enrolment(email=email, code=pyotp.TOTP(secret).now(), source_ip=_IP)
