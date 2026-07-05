@@ -185,7 +185,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install Semgrep
-        run: pip install semgrep==1.97.0
+        # setuptools ships pkg_resources, which Semgrep 1.97.0's bundled
+        # opentelemetry-instrumentation imports at startup. Python 3.12 no longer
+        # installs setuptools by default, so add it explicitly or Semgrep crashes
+        # with "ModuleNotFoundError: No module named 'pkg_resources'".
+        run: pip install "setuptools<81" semgrep==1.97.0
 
       # Rulesets cover OWASP Top Ten plus language-specific checks for the Python
       # backend and the JavaScript/React frontend. --error sets a non-zero exit on
