@@ -47,13 +47,17 @@ def test_replay_and_conflict(require_db, app):
         s.add(rec)
         s.commit()
 
-        # Same hash -> replay stored payload.
-        assert idempotency.replay_or_conflict(s, key, "hash-A") == {"ok": True}
-        # Different hash -> conflict.
+        # Same user + same hash -> replay stored payload.
+        assert idempotency.replay_or_conflict(s, key, "hash-A", u.user_id) == {"ok": True}
+        # Same user + different hash -> conflict.
         with pytest.raises(IdempotencyConflict):
-            idempotency.replay_or_conflict(s, key, "hash-B")
+            idempotency.replay_or_conflict(s, key, "hash-B", u.user_id)
         # Unknown key -> None (new).
-        assert idempotency.replay_or_conflict(s, uuid.uuid4(), "hash-A") is None
+        assert idempotency.replay_or_conflict(s, uuid.uuid4(), "hash-A", u.user_id) is None
+        # DIFFERENT user, same key + hash -> conflict, NEVER replays another user's
+        # receipt (SR-08 + ownership, SR-13).
+        with pytest.raises(IdempotencyConflict):
+            idempotency.replay_or_conflict(s, key, "hash-A", uuid.uuid4())
     finally:
         s.close()
 

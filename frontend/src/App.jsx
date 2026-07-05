@@ -145,7 +145,7 @@ export default function App() {
             !auth.isAuthenticated ? (
               <Login onLoginSuccess={handleLoginSuccess} />
             ) : (
-              <Navigate to={auth.role === 'admin' ? "/admin/users" : "/dashboard"} replace />
+              <Navigate to={auth.role === 'admin' ? "/console/users" : "/dashboard"} replace />
             )
           }
         />
@@ -200,7 +200,7 @@ export default function App() {
           <Route path="/history" element={<ProtectedCustomerRoute auth={auth}><History /></ProtectedCustomerRoute>} />
           <Route path="/transfer" element={<ProtectedCustomerRoute auth={auth}><Transfer /></ProtectedCustomerRoute>} />
           <Route path="/bills" element={<ProtectedCustomerRoute auth={auth}><PayBill /></ProtectedCustomerRoute>} />
-          <Route path="/accounts" element={<ProtectedCustomerRoute auth={auth}><ManageAccount /></ProtectedCustomerRoute>} />
+          <Route path="/account" element={<ProtectedCustomerRoute auth={auth}><ManageAccount /></ProtectedCustomerRoute>} />
           <Route path="/settings" element={<ProtectedCustomerRoute auth={auth}><Settings /></ProtectedCustomerRoute>} />
         </Route>
 
@@ -212,10 +212,10 @@ export default function App() {
               : <Navigate to="/login" replace />
           }
         >
-          <Route path="/admin/users" element={<AdminUsers />} />
-          <Route path="/admin/openings" element={<AdminOpenings />} />
-          <Route path="/admin/closures" element={<AdminClosures />} />
-          <Route path="/admin/audit" element={<AdminAudit />} />
+          <Route path="/console/users" element={<AdminUsers />} />
+          <Route path="/console/openings" element={<AdminOpenings />} />
+          <Route path="/console/closures" element={<AdminClosures />} />
+          <Route path="/console/audit" element={<AdminAudit />} />
         </Route>
 
         {/* FALLBACK */}

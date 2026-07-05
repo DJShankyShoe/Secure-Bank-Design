@@ -53,17 +53,20 @@ def get_record(session: Session, key: uuid.UUID) -> Optional[IdempotencyRecord]:
 
 
 def replay_or_conflict(
-    session: Session, key: uuid.UUID, request_hash: str
+    session: Session, key: uuid.UUID, request_hash: str, user_id: uuid.UUID
 ) -> Optional[dict[str, Any]]:
     """Return the stored response to replay, or raise on conflict, or ``None``.
 
     ``None`` means the key is new → the caller should execute and then persist a
-    record via :func:`make_record`.
+    record via :func:`make_record`. The lookup is scoped to ``user_id``: keys are a
+    global namespace, so a key belonging to a **different** user is treated as a
+    conflict and its stored receipt is **never** replayed to the caller (SR-08 +
+    ownership, SR-13).
     """
     record = get_record(session, key)
     if record is None:
         return None
-    if record.request_hash != request_hash:
+    if record.user_id != user_id or record.request_hash != request_hash:
         raise IdempotencyConflict()
     return record.response_payload
 

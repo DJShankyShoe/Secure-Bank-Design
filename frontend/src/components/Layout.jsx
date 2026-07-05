@@ -4,7 +4,7 @@ import SessionTimer from './SessionTimer.jsx';
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
-  { id: "accounts", label: "Accounts", badge: "", path: "/accounts" },
+  { id: "accounts", label: "Accounts", badge: "", path: "/account" },
   { id: "history", label: "Transaction History", badge: "", path: "/history" },
   { id: "transfer", label: "Transfers", badge: "", path: "/transfer" },
   { id: "bills", label: "Bill Payment", badge: "", path: "/bills" },

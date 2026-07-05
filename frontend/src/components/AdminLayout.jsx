@@ -31,10 +31,10 @@ export default function AdminLayout({ onLogout }) {
   }, [location.pathname]);
 
   const adminNavItems = [
-    { id: "users", label: "User Directory", badge: "", path: "/admin/users" },
-    { id: "openings", label: "Account Openings", badge: counts.open_requested || "", path: "/admin/openings" },
-    { id: "closures", label: "Account Closures", badge: counts.close_requested || "", path: "/admin/closures" },
-    { id: "audit", label: "System Audit Logs", badge: "", path: "/admin/audit" }
+    { id: "users", label: "User Directory", badge: "", path: "/console/users" },
+    { id: "openings", label: "Account Openings", badge: counts.open_requested || "", path: "/console/openings" },
+    { id: "closures", label: "Account Closures", badge: counts.close_requested || "", path: "/console/closures" },
+    { id: "audit", label: "System Audit Logs", badge: "", path: "/console/audit" }
   ];
 
   return (
