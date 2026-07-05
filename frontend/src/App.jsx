@@ -21,6 +21,7 @@ import History from './pages/Dashboard/History.jsx';
 import Transfer from './pages/Transactions/Transfer.jsx';
 import PayBill from './pages/Transactions/PayBill.jsx';
 import ManageAccount from './pages/Accounts/Manage.jsx';
+import Settings from './pages/Settings/Settings.jsx';
 
 // Admin Pages
 import AdminUsers from './pages/Admin/Users.jsx';
@@ -136,6 +137,7 @@ export default function App() {
           <Route path="/transfer" element={<ProtectedCustomerRoute auth={auth}><Transfer /></ProtectedCustomerRoute>} />
           <Route path="/bills" element={<ProtectedCustomerRoute auth={auth}><PayBill /></ProtectedCustomerRoute>} />
           <Route path="/accounts" element={<ProtectedCustomerRoute auth={auth}><ManageAccount /></ProtectedCustomerRoute>} />
+          <Route path="/settings" element={<ProtectedCustomerRoute auth={auth}><Settings /></ProtectedCustomerRoute>} />
         </Route>
 
         {/* ADMIN AREA */}

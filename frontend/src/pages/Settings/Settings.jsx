@@ -1,52 +1,75 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from '../../api/api';
 
 export default function Settings() {
   const [newEmail, setNewEmail] = useState('');
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
-  
-  // Controls the notification preferences
   const [notifyOnTransfer, setNotifyOnTransfer] = useState(true);
   const [notifyOnLogin, setNotifyOnLogin] = useState(true);
+  const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+
+  useEffect(() => {
+    api.getAccountPreferences()
+      .then(data => {
+        setNotifyOnTransfer(data.notify_on_transfer);
+        setNotifyOnLogin(data.notify_on_login);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleUpdateEmail = async (e) => {
     e.preventDefault();
-    // TODO (Backend):
-    // 1. Send "Confirm your new SecureBank email" to the NEW email address.
-    // 2. Send "SecureBank email change requested" alert to the OLD/CURRENT email address.
-    // 3. Do NOT change the email in the DB until the link in the new email is clicked.
-    console.log("Mock Email Update request for:", newEmail);
-    alert("Verification link sent to your new email. A security alert has been sent to your current email.");
-    setNewEmail('');
+    if (isSubmittingEmail) return;
+    try {
+      setIsSubmittingEmail(true);
+      await api.requestEmailChange(newEmail);
+      alert("Verification link sent to your new email. A security alert has been sent to your current email.");
+      setNewEmail('');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmittingEmail(false);
+    }
   };
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
+    if (isSubmittingPassword) return;
     if (passwordData.new !== passwordData.confirm) {
       alert("New passwords do not match.");
       return;
     }
-    if (passwordData.new.length < 12) {
-      alert("Password must be at least 12 characters.");
-      return;
+    try {
+      setIsSubmittingPassword(true);
+      await api.changePassword(passwordData.current, passwordData.new);
+      alert("Password updated successfully.");
+      setPasswordData({ current: '', new: '', confirm: '' });
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmittingPassword(false);
     }
-    // TODO (Backend): Verify current password, hash new password, update DB, invalidate all sessions.
-    console.log("Mock Password Change");
-    alert("Password updated successfully.");
-    setPasswordData({ current: '', new: '', confirm: '' });
   };
 
-  const handleToggleTransfer = (e) => {
+  const handleToggleTransfer = async (e) => {
     const isChecked = e.target.checked;
     setNotifyOnTransfer(isChecked);
-    // TODO (Backend): Update user.notify_on_transfer = isChecked in DB.
-    console.log("Mock Preference Update: notify_on_transfer =", isChecked);
+    try {
+      await api.updateAccountPreferences({ notify_on_transfer: isChecked });
+    } catch {
+      setNotifyOnTransfer(!isChecked);
+    }
   };
 
-  const handleToggleLogin = (e) => {
+  const handleToggleLogin = async (e) => {
     const isChecked = e.target.checked;
     setNotifyOnLogin(isChecked);
-    // TODO (Backend): Update user.notify_on_login = isChecked in DB.
-    console.log("Mock Preference Update: notify_on_login =", isChecked);
+    try {
+      await api.updateAccountPreferences({ notify_on_login: isChecked });
+    } catch {
+      setNotifyOnLogin(!isChecked);
+    }
   };
 
   return (
@@ -120,7 +143,7 @@ export default function Settings() {
               />
             </div>
             <div>
-              <button type="submit" className="primary-button">Send Verification Link</button>
+              <button type="submit" className="primary-button" disabled={isSubmittingEmail}>{isSubmittingEmail ? "Sending..." : "Send Verification Link"}</button>
             </div>
           </form>
         </div>
@@ -164,8 +187,8 @@ export default function Settings() {
               />
             </div>
             <div>
-              <button type="submit" className="secondary-button" style={{ borderColor: '#111827', color: '#111827', width: '100%', height: '42px', fontWeight: '600' }}>
-                Update Password
+              <button type="submit" className="secondary-button" disabled={isSubmittingPassword} style={{ borderColor: '#111827', color: '#111827', width: '100%', height: '42px', fontWeight: '600' }}>
+                {isSubmittingPassword ? "Updating..." : "Update Password"}
               </button>
             </div>
           </form>
