@@ -170,10 +170,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # NON-BLOCKING for now: Semgrep runs and uploads its findings, but does not
-    # fail the build yet (avoids surprise red on first introduction). Delete the
-    # `continue-on-error` line below to make OWASP findings gate the pipeline.
-    continue-on-error: true
+    # BLOCKING: Semgrep findings fail this job (via --error), and the deploy job
+    # `needs` it — so OWASP/Python/JS findings stop a push from deploying.
 
     steps:
       - name: Check out the code
@@ -193,7 +191,7 @@ jobs:
 
       # Rulesets cover OWASP Top Ten plus language-specific checks for the Python
       # backend and the JavaScript/React frontend. --error sets a non-zero exit on
-      # findings (which the job-level continue-on-error currently swallows).
+      # findings, which now fails the job and blocks the deploy (this job gates).
       #
       # --exclude nginx: this SAST targets the app code (Python/JS). The nginx
       # reverse-proxy config is infra (out of backend scope) and only tripped the
@@ -223,11 +221,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # NON-BLOCKING for now: scans the full git history for committed secrets and
-    # reports, but does not fail the build yet. Delete `continue-on-error` to make
-    # a detected secret fail the pipeline. Gitleaks CLI is MIT-licensed (no key
-    # needed for a personal repo); pinned to an immutable image tag.
-    continue-on-error: true
+    # BLOCKING: a committed secret fails this job, and the deploy job `needs` it —
+    # so a detected secret stops a push from deploying. Known non-secrets (the
+    # itsdangerous token salts and the CI-only dummy creds) are allowlisted in
+    # .gitleaks.toml. Gitleaks CLI is MIT-licensed; pinned to an immutable image tag.
 
     steps:
       - name: Check out the code
@@ -246,11 +243,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # NON-BLOCKING: boots the backend and runs a ZAP baseline scan against its
-    # public surface — headers, CSP, cookie flags, info leaks (OWASP A05 Security
-    # Misconfiguration). Delete `continue-on-error` to gate. This is an
-    # UNAUTHENTICATED baseline: it does not deep-scan the auth-gated endpoints.
-    continue-on-error: true
+    # BLOCKING: boots the backend and runs a ZAP baseline scan against its public
+    # surface — headers, CSP, cookie flags, info leaks (OWASP A05 Security
+    # Misconfiguration). The deploy job `needs` it, so a real FAIL-level alert stops
+    # a push from deploying. ZAP runs with -I so noisy WARN-level findings do NOT
+    # fail the gate (only genuine FAILs do). This is an UNAUTHENTICATED baseline: it
+    # does not deep-scan the auth-gated endpoints.
 
     services:
       postgres:
@@ -325,16 +323,17 @@ jobs:
 
       # ZAP runs with --network host so localhost:8000 reaches the app on the runner.
       # Image tag 'stable' is mutable; pin to a digest for strict supply-chain control.
+      # -I: do not fail on WARN-level findings (baseline noise) — only genuine
+      # FAIL-level alerts return non-zero and gate the deploy.
       - name: ZAP baseline scan
         working-directory: ${{ github.workspace }}
-        continue-on-error: true
         run: |
           mkdir -p zap-out && chmod 777 zap-out
           docker run --rm --network host \
             -v "${{ github.workspace }}/zap-out:/zap/wrk/:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py -t http://localhost:8000 \
-              -r zap-report.html -w zap-report.md -J zap-report.json || true
+              -I -r zap-report.html -w zap-report.md -J zap-report.json
 
       - name: Upload ZAP report
         if: always()
@@ -345,7 +344,9 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # CD — deploy to the EC2 host, but ONLY after CI passes.
-  #   * needs: [frontend, backend]  -> runs only if both went green (the gate).
+  #   * needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
+  #       -> deploys ONLY if the build/tests AND every security gate went green
+  #          (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST).
   #   * if:    only on a push/manual-run of the integration-test branch
   #            (so pushes to production/Frontend/backend and all PRs never deploy).
   #   * The script uses only repo `secrets.*` (never untrusted event input), so
@@ -360,7 +361,7 @@ jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
-    needs: [frontend, backend]
+    needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
     permissions:
       contents: read
     if: >-
