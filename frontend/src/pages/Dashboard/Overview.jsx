@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { toast } from '../../ui/notify.jsx';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/api';
 
@@ -9,10 +8,6 @@ export default function Dashboard() {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // Profile is cached at login (from /auth/me); greet the user by first name.
-  const storedUser = JSON.parse(sessionStorage.getItem("securebank_user") || "{}");
-  const firstName = (storedUser.full_name || "").trim().split(" ")[0];
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -27,7 +22,7 @@ export default function Dashboard() {
         }
 
       } catch (err) {
-        toast.error(err.message);
+        alert(err.message);
       } finally {
         setLoading(false);
       }
@@ -60,7 +55,7 @@ export default function Dashboard() {
     <>
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">{firstName ? `Welcome back, ${firstName}` : "Welcome back"}</p>
+          <p className="eyebrow">Welcome back</p>
           <h1>Your accounts, payments, and transfers in one place.</h1>
           <div className="hero-actions">
             <button className="primary-button" onClick={() => navigate('/transfer')}>Make a transfer</button>

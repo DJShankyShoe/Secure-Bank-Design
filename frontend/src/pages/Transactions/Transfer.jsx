@@ -1,5 +1,4 @@
 // Transfer.jsx
-import { toast } from '../../ui/notify.jsx';
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/api';
 
@@ -34,7 +33,7 @@ export default function Transfer() {
         }));
 
       } catch (err) {
-        toast.error(err.message);
+        alert(err.message);
       } finally {
         setLoading(false);
       }
@@ -44,7 +43,7 @@ export default function Transfer() {
   }, []);
 
   const formatAccountLabel = (account) =>
-    `${account.account_type} • ${account.account_number}`;
+    `${account.account_type} • ****${account.account_number.slice(-4)}`;
 
   // Strict Currency Validator
   const handleAmountChange = (e) => {
@@ -70,11 +69,11 @@ export default function Transfer() {
         amount_cents,
         requiresPin ? transactionPin : null
       );
-      toast.success("Transfer initiated successfully.");
+      alert("Transfer initiated successfully.");
       setFormData({ ...formData, amount: '', reference: '', beneficiaryName: '', destinationAccount: '' });
       setTransactionPin('');
     } catch (err) {
-      toast.error(err.message);
+      alert(err.message);
     } finally {
       setSubmitting(false);
     }

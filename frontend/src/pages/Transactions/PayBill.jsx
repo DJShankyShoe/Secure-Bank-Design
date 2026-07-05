@@ -1,5 +1,4 @@
 // PayBill.jsx
-import { toast } from '../../ui/notify.jsx';
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/api';
 
@@ -37,7 +36,7 @@ export default function PayBill() {
         }));
 
       } catch (err) {
-        toast.error(err.message);
+        alert(err.message);
       } finally {
         setLoading(false);
       }
@@ -47,7 +46,7 @@ export default function PayBill() {
   }, []);
 
   const formatAccountLabel = (account) =>
-    `${account.account_type} • ${account.account_number}`;
+    `${account.account_type} • ****${account.account_number.slice(-4)}`;
 
   const selectedBiller = billers.find((b) => b.biller_id === paymentData.billerId);
   const selectedAccount = accounts.find((a) => a.account_number === paymentData.sourceAccount);
@@ -72,10 +71,10 @@ export default function PayBill() {
         paymentData.billerId,
         amount_cents
       );
-      toast.success("Bill payment initiated successfully.");
+      alert("Bill payment initiated successfully.");
       setPaymentData({ ...paymentData, amount: '', date: '' });
     } catch (err) {
-      toast.error(err.message);
+      alert(err.message);
     } finally {
       setSubmitting(false);
     }

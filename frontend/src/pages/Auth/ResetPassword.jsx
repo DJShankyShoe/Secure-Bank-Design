@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { toast } from '../../ui/notify.jsx';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from "../../api/api";
 
@@ -41,7 +40,7 @@ export default function ResetPassword() {
         formData.authCode
       );
 
-      toast.success("Password reset successfully. Please log in with your new credentials.");
+      alert("Password reset successfully. Please log in with your new credentials.");
       navigate('/login');
     } catch (err) {
       setError(err.message);

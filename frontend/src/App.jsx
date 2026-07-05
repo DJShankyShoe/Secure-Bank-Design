@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { api, setUnauthorizedHandler } from "./api/api";
-import { NotificationHost } from "./ui/notify.jsx";
+import { api } from "./api/api";
 
 // Layouts
 import Layout from './components/Layout.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
+
+// Settings
+import Settings from './pages/Settings/Settings.jsx';
 
 // Auth Pages
 import Login from './pages/Auth/Login.jsx';
@@ -22,7 +24,6 @@ import History from './pages/Dashboard/History.jsx';
 import Transfer from './pages/Transactions/Transfer.jsx';
 import PayBill from './pages/Transactions/PayBill.jsx';
 import ManageAccount from './pages/Accounts/Manage.jsx';
-import Settings from './pages/Settings/Settings.jsx';
 
 // Admin Pages
 import AdminUsers from './pages/Admin/Users.jsx';
@@ -30,200 +31,112 @@ import AdminOpenings from './pages/Admin/Openings.jsx';
 import AdminClosures from './pages/Admin/Closures.jsx';
 import AdminAudit from './pages/Admin/Audit.jsx';
 
-// ============================
-// Protected Route
-// ============================
+// ==========================================
+// THE TRAFFIC COP (Protected Route Wrapper)
+// ==========================================
 const ProtectedCustomerRoute = ({ auth, children }) => {
+  // 1. Check Authentication & Role
   if (!auth.isAuthenticated) return <Navigate to="/login" replace />;
   if (auth.role !== 'customer') return <Navigate to="/login" replace />;
-
-  // Email must be verified first
-  if (!auth.emailVerified) return <Navigate to="/verify-email" replace />;
-
-  // BANK PIN (NOT OTP)
-  if (!auth.pinSetupCompleted) return <Navigate to="/setup-pin" replace />;
-
+  
+  // 2. Enforce Onboarding Steps based on Backend Flags (Order matters!)
+  if (auth.emailVerified === false) return <Navigate to="/verify-email" replace />;
+  if (auth.totpConfirmed === false) return <Navigate to="/setup-pin" replace />;
+  
+  // 3. If they pass all checks, render the requested page!
   return children;
 };
 
 export default function App() {
-
-  const [auth, setAuth] = useState({
-    isAuthenticated: false,
+  // Track authentication, role, AND onboarding flags provided by the backend
+  const [auth, setAuth] = useState({ 
+    isAuthenticated: false, 
     role: null,
-    emailVerified: true,
-    pinSetupCompleted: true   // default optimistic value until checks resolve
+    emailVerified: true, // Default to true so admins don't get trapped
+    totpConfirmed: true  // Default to true so admins don't get trapped
   });
 
-  // Until we've asked the backend whether a session already exists, we don't know
-  // if the user is logged in — hold rendering so we don't flash the login page.
-  const [authReady, setAuthReady] = useState(false);
-
-  // On load, restore the session from the server-side cookie (if any) so a refresh
-  // or a direct visit to /login correctly recognises an already-logged-in user.
-  useEffect(() => {
-    api.me()
-      .then(async (profile) => {
-        sessionStorage.setItem("securebank_user", JSON.stringify(profile));
-
-        // PIN status comes from its own endpoint, not /auth/me.
-        // GET /transactions/pin -> { pin_set: true/false }
-        let pinSetupCompleted = false;
-        try {
-          const pinStatus = await api.getPinStatus();
-          pinSetupCompleted = pinStatus.pin_set ?? false;
-        } catch (pinErr) {
-          console.error("Could not check PIN status", pinErr);
-        }
-
-        setAuth({
-          isAuthenticated: true,
-          role: profile.role,
-          emailVerified: profile.email_verified ?? true,
-          pinSetupCompleted
-        });
-      })
-      .catch(() => {
-        // No valid session (401) — stay logged out.
-      })
-      .finally(() => setAuthReady(true));
-  }, []);
-
-  // Any 401 from the API (expired/revoked/missing session) clears auth; the route
-  // guards then redirect to /login — for both customer and admin areas.
-  useEffect(() => {
-    setUnauthorizedHandler(() => {
-      sessionStorage.removeItem("securebank_user");
-      setAuth({
-        isAuthenticated: false,
-        role: null,
-        emailVerified: true,
-        pinSetupCompleted: true
-      });
-    });
-  }, []);
-
+  // Uses the API call
   const handleLogout = async () => {
     try {
       await api.logout();
+    } catch (err) {
+      console.error("Logout failed:", err);
     } finally {
-      setAuth({
-        isAuthenticated: false,
-        role: null,
-        emailVerified: true,
-        pinSetupCompleted: true
-      });
+      sessionStorage.removeItem("securebank_user");
+      setAuth({ isAuthenticated: false, role: null, emailVerified: true, totpConfirmed: true });
     }
   };
 
+  // The login handler now accepts the exact payload from the backend / Login.jsx
   const handleLoginSuccess = (loginData) => {
-    const { role, emailVerified, pinSetupCompleted } = loginData;
-
-    setAuth({
-      isAuthenticated: true,
-      role,
-      emailVerified,
-      pinSetupCompleted
+    setAuth({ 
+      isAuthenticated: true, 
+      role: loginData.role, 
+      emailVerified: loginData.emailVerified, 
+      totpConfirmed: loginData.totpConfirmed 
     });
   };
-
-  if (!authReady) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#6B7280' }}>
-        Loading...
-      </div>
-    );
-  }
 
   return (
     <Router>
       <Routes>
-
-        {/* PUBLIC ROUTES */}
-        <Route
-          path="/login"
-          element={
-            !auth.isAuthenticated ? (
-              <Login onLoginSuccess={handleLoginSuccess} />
-            ) : (
-              <Navigate to={auth.role === 'admin' ? "/console/users" : "/dashboard"} replace />
-            )
-          }
+        
+        {/* ========================================= */}
+        {/* PUBLIC ROUTES                             */}
+        {/* ========================================= */}
+        <Route 
+          path="/login" 
+          element={!auth.isAuthenticated ? (
+            <Login onLoginSuccess={handleLoginSuccess} /> 
+          ) : (
+            <Navigate to={auth.role === 'admin' ? "/admin/users" : "/dashboard"} replace />
+          )} 
         />
-
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/register/totp" element={<RegisterTotpSetup />} />
-
-        {/* EMAIL VERIFICATION PAGE (RESTORED) */}
-        <Route
-          path="/verify-email"
-          element={
-            <VerifyEmail
-              onVerificationComplete={() =>
-                setAuth(prev => ({
-                  ...prev,
-                  emailVerified: true
-                }))
-              }
-            />
-          }
+        
+        {/* Onboarding Routes update the App state when completed */}
+        <Route 
+          path="/verify-email" 
+          element={<VerifyEmail onVerificationComplete={() => setAuth({ ...auth, emailVerified: true })} />} 
+        />
+        <Route 
+          path="/setup-pin" 
+          element={<SetupPin onSetupComplete={() => setAuth({ ...auth, totpConfirmed: true })} />} 
         />
 
-        {/* EMAIL CHANGE VERIFICATION (link sent to the NEW address, FR-04) */}
-        <Route path="/verify-email-change" element={<VerifyEmail mode="change" />} />
-
-        {/* BANK PIN SETUP (NOT OTP) */}
-        <Route
-          path="/setup-pin"
-          element={
-            <SetupPin
-              onSetupComplete={() =>
-                setAuth(prev => ({
-                  ...prev,
-                  pinSetupCompleted: true
-                }))
-              }
-            />
-          }
-        />
-
-        {/* CUSTOMER AREA */}
-        <Route
-          element={
-            auth.isAuthenticated && auth.role === 'customer'
-              ? <Layout onLogout={handleLogout} />
-              : <Navigate to="/login" replace />
-          }
-        >
+        {/* ========================================= */}
+        {/* CUSTOMER PORTAL (Guarded by Traffic Cop)  */}
+        {/* ========================================= */}
+        <Route element={<Layout onLogout={handleLogout} />}>
           <Route path="/dashboard" element={<ProtectedCustomerRoute auth={auth}><Dashboard /></ProtectedCustomerRoute>} />
           <Route path="/history" element={<ProtectedCustomerRoute auth={auth}><History /></ProtectedCustomerRoute>} />
           <Route path="/transfer" element={<ProtectedCustomerRoute auth={auth}><Transfer /></ProtectedCustomerRoute>} />
           <Route path="/bills" element={<ProtectedCustomerRoute auth={auth}><PayBill /></ProtectedCustomerRoute>} />
-          <Route path="/account" element={<ProtectedCustomerRoute auth={auth}><ManageAccount /></ProtectedCustomerRoute>} />
+          <Route path="/accounts" element={<ProtectedCustomerRoute auth={auth}><ManageAccount /></ProtectedCustomerRoute>} />
           <Route path="/settings" element={<ProtectedCustomerRoute auth={auth}><Settings /></ProtectedCustomerRoute>} />
         </Route>
 
-        {/* ADMIN AREA */}
-        <Route
-          element={
-            auth.isAuthenticated && auth.role === 'admin'
-              ? <AdminLayout onLogout={handleLogout} />
-              : <Navigate to="/login" replace />
-          }
-        >
-          <Route path="/console/users" element={<AdminUsers />} />
-          <Route path="/console/openings" element={<AdminOpenings />} />
-          <Route path="/console/closures" element={<AdminClosures />} />
-          <Route path="/console/audit" element={<AdminAudit />} />
+        {/* ========================================= */}
+        {/* ADMIN PORTAL (Strictly locked)            */}
+        {/* ========================================= */}
+        <Route element={<AdminLayout onLogout={handleLogout} />}>
+          <Route path="/admin/users" element={auth.isAuthenticated && auth.role === 'admin' ? <AdminUsers /> : <Navigate to="/login" replace />} />
+          <Route path="/admin/openings" element={auth.isAuthenticated && auth.role === 'admin' ? <AdminOpenings /> : <Navigate to="/login" replace />} />
+          <Route path="/admin/closures" element={auth.isAuthenticated && auth.role === 'admin' ? <AdminClosures /> : <Navigate to="/login" replace />} />
+          <Route path="/admin/audit" element={auth.isAuthenticated && auth.role === 'admin' ? <AdminAudit /> : <Navigate to="/login" replace />} />
+          <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
         </Route>
 
-        {/* FALLBACK */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-
+        {/* ========================================= */}
+        {/* FALLBACK ROUTE                            */}
+        {/* ========================================= */}
+        <Route path="*" element={<Navigate to={auth.isAuthenticated ? (auth.role === 'admin' ? "/admin/users" : "/dashboard") : "/login"} replace />} />
+        
       </Routes>
-      <NotificationHost />
     </Router>
   );
 }
