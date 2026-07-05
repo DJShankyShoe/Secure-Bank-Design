@@ -1,15 +1,324 @@
-# SecureBank Backend — API Reference
+# SecureBank
 
-REST/JSON API for the SecureBank app. This document is for the frontend team.
+> Secure retail internet-banking web app (Singapore). A **React + Vite** single-page
+> frontend and a **Flask + PostgreSQL 16** backend, fronted by **nginx + Cloudflare**, built
+> **defence-in-depth** so that the failure of any single control does not cause compromise.
 
-## Conventions
+This is a **monorepo**: the API (`backend/`), the SPA (`frontend/`), the reverse-proxy config
+(`nginx/`), and the CI/CD security pipeline (`.github/`) live together so a reviewer can trace a
+request from the browser all the way to the database in a single checkout.
+
+---
+
+## Contents
+- [1. Overview](#1-overview)
+- [2. Architecture at a glance](#2-architecture-at-a-glance)
+- [3. Repository layout](#3-repository-layout)  ← **start here for a code review**
+- [4. How the code is organized for review](#4-how-the-code-is-organized-for-review)
+- [5. Security control → source map](#5-security-control--source-map)
+- [6. Reviewer quickstart](#6-reviewer-quickstart)
+- [7. Local development](#7-local-development)
+- [8. CI/CD & security scanning](#8-cicd--security-scanning)
+- [9. Backend API reference](#9-backend-api-reference)
+- [10. Frontend implementation notes](#10-frontend-implementation-notes)
+- [11. Before integrating](#11-before-integrating)
+
+---
+
+## 1. Overview
+
+Registered customers open accounts, transfer funds, pay registered billers, and review transaction
+history through a browser; admin staff perform oversight under role-based access control. **Security
+is the product** — every endpoint enforces its controls **server-side**, and the codebase is laid out
+so each control can be reviewed in one place.
+
+| Tier | Technology |
+|---|---|
+| **Frontend** | React 18 + React Router, built with **Vite**; plain CSS |
+| **Backend** | **Python 3.12**, Flask, SQLAlchemy ORM |
+| **Database** | **PostgreSQL 16** — three schemas, three least-privilege roles |
+| **Security libs** | argon2-cffi (Argon2id), cryptography (AES-256-GCM), pyotp (TOTP), Flask-WTF (CSRF), Flask-Talisman (headers) |
+| **Edge** | nginx reverse proxy + Cloudflare (TLS, per-IP rate limiting, WAF) |
+| **CI/CD** | GitHub Actions: pytest · flake8 · Bandit · Semgrep · OWASP Dependency-Check · Gitleaks · OWASP ZAP |
+
+**Feature set:** MFA login (password → TOTP), in-house server-side sessions, admin-approved account
+open/close flows, fund transfer with a **PIN step-up for ≥ SGD 1,000**, bill payment to allowlisted
+billers, admin oversight with a full audit log, and self-service recovery (account unlock,
+forgot-password, email change) — all audited.
+
+---
+
+## 2. Architecture at a glance
+
+Layered tiers, each independently enforcing controls:
+
+```
+Browser (React SPA)
+   │  HTTPS · same-origin · Secure+HttpOnly+SameSite=Strict cookie · X-CSRFToken header
+   ▼
+Cloudflare ──► nginx     TLS termination · per-IP rate limits · ~1 MB body cap · serves the built SPA
+   │            proxies /auth /accounts /transactions /admin · forwards the real client IP
+   ▼
+Flask app (gunicorn · stateless · 1..N instances)
+   │  Security gateway runs BEFORE every protected handler, in order:
+   │    1 session validation → 2 CSRF → 3 role check → 4 input allowlist → 5 resource ownership
+   ▼
+SQLAlchemy     parameterised ORM only · 5-second statement timeout
+   ▼
+PostgreSQL 16 — three schemas reached by three roles:
+     application (app_user)   session (app_user)   audit (audit_writer=INSERT-only / admin_reader=SELECT-only)
+```
+
+Flask-Talisman adds security headers (HSTS, CSP, `nosniff`, frame-deny, referrer-policy) to **every**
+response. All shared state (sessions, idempotency records, attempt counters) lives in PostgreSQL, so
+app instances stay **stateless and horizontally scalable**.
+
+---
+
+## 3. Repository layout
+
+Annotated tree of the whole monorepo. Generated/vendored directories (`node_modules/`,
+`frontend/dist/`, `__pycache__/`) are omitted. **This is the fastest way to orient a review** — every
+top-level area is single-purpose.
+
+```
+SecureBank/
+├── backend/                          # Flask REST API (Python 3.12) — the security core
+│   ├── app/
+│   │   ├── __init__.py               # create_app() factory: ProxyFix → 3 DB engines → Talisman → CSRF → blueprints
+│   │   ├── config.py                 # env-driven config; FAILS FAST if a required secret is missing (SR-07)
+│   │   ├── extensions.py             # SQLAlchemy engines/binds (app / session / audit), CSRFProtect, Talisman
+│   │   │
+│   │   ├── blueprints/               # one folder per feature; routes.py = HTTP surface, service.py = domain logic
+│   │   │   ├── auth/                  # registration, 2-stage login+MFA, PIN, lockout/unlock, reset, email change
+│   │   │   │   ├── routes.py          #   HTTP endpoints + which decorators guard each
+│   │   │   │   ├── service.py         #   registration, credentials, NRIC blind-index uniqueness, PIN set
+│   │   │   │   ├── login_service.py   #   password→MFA flow + signed token serializers (verify/reset/unlock)
+│   │   │   │   └── email_service.py   #   email-change request/verify flow
+│   │   │   ├── accounts/              # open-request/approve, view, paginated history, close-request
+│   │   │   ├── transactions/          # transfer (atomic + PIN step-up), bill payment, PIN mgmt, idempotency
+│   │   │   └── admin/                 # RBAC oversight: users/accounts, approvals, NRIC reveal, audit read
+│   │   │
+│   │   ├── models/                   # SQLAlchemy models, SPLIT BY SCHEMA (mirrors the DB privilege boundary)
+│   │   │   ├── base.py               #   declarative base / shared column mixins
+│   │   │   ├── application.py        #   users, accounts, transactions, billers, contact_preferences, ...
+│   │   │   ├── session.py            #   sessions, idempotency_records, auth_attempts
+│   │   │   └── audit.py              #   audit_events (append-only)
+│   │   │
+│   │   ├── security/                 # ★ REVIEWER FOCUS — every reusable security primitive lives here
+│   │   │   ├── decorators.py         #   @require_authenticated / @require_role / CSRF / ownership pipeline (SR-05/06/13)
+│   │   │   ├── crypto.py             #   Argon2id (password + distinct PIN params), AES-256-GCM, NRIC blind index (SR-01/03/12)
+│   │   │   ├── sessions.py           #   server-side session create/validate/rotate/revoke — 15-min idle / 8-h absolute (SR-13)
+│   │   │   ├── mfa.py                #   TOTP verify + single-use replay guard, backup codes (SR-11)
+│   │   │   ├── lockout.py            #   per-account lockout + TOTP/PIN attempt windows, DB-backed (SR-09/11/12)
+│   │   │   ├── validation.py         #   allowlist validators: email, NRIC, amount, string caps (SR-06)
+│   │   │   └── masking.py            #   NRIC masking, e.g. S****567D (SR-03)
+│   │   │
+│   │   ├── services/                 # cross-cutting business services
+│   │   │   ├── audit.py              #   structured audit emitter — audit_writer engine, own connection (SR-14)
+│   │   │   ├── email.py              #   smtplib sender (async dispatch) + renders templates/email/*
+│   │   │   ├── idempotency.py        #   Idempotency-Key lookup/store — replay-safe transfers/payments (SR-08)
+│   │   │   └── cleanup.py            #   TTL cleanup of expired sessions / idempotency rows (`flask cleanup`)
+│   │   │
+│   │   └── templates/email/          # auto-escaped Jinja2 email bodies (receipts, verify, reset, alerts)
+│   │
+│   ├── sql/                          # PostgreSQL DDL — numbered = apply in order
+│   │   ├── 01_schemas_roles.sql      #   the 3 schemas + 3 roles
+│   │   ├── 02_application.sql        #   application tables
+│   │   ├── 03_session.sql            #   session tables
+│   │   ├── 04_audit.sql              #   audit table
+│   │   ├── 05_grants.sql             #   ★ least-privilege GRANT/REVOKE (audit_writer = INSERT only)
+│   │   └── 06_seed_billers.sql       #   allowlisted biller catalogue
+│   │
+│   ├── tests/                        # pytest suite — ONE FILE PER MODULE/FEATURE (mirrors app/)
+│   ├── scripts/                      # run.sh (build/run gunicorn containers) · setup_production.sh (.env + DB)
+│   ├── Dockerfile                    # production image: gunicorn, host networking, secrets injected at runtime
+│   ├── requirements.txt              # pinned runtime deps (scanned by OWASP Dependency-Check)
+│   ├── requirements-dev.txt          # test / lint / SAST tooling
+│   ├── pytest.ini                    # pytest config
+│   └── setup.cfg                     # flake8 (PEP 8) config — 100-char lines
+│
+├── frontend/                         # React + Vite single-page app
+│   └── src/
+│       ├── main.jsx                  # React DOM entry point
+│       ├── App.jsx                   # global auth state + protected routing ("traffic cop") + <NotificationHost/>
+│       ├── api/api.js                # single API client: CSRF bootstrap, 401/session handling, every endpoint
+│       ├── components/               # Layout.jsx + AdminLayout.jsx (nav shells) · SessionTimer.jsx (idle countdown)
+│       ├── ui/notify.jsx             # in-app toast + confirm/prompt modal kit (replaces browser alert/confirm/prompt)
+│       ├── pages/                    # one folder per domain area
+│       │   ├── Auth/                 #   Login, Register, RegisterTotpSetup, ForgotPassword, ResetPassword, SetupPin, VerifyEmail
+│       │   ├── Dashboard/            #   Overview (balances) · History (filterable transactions)
+│       │   ├── Transactions/         #   Transfer (PIN step-up ≥ SGD 1,000) · PayBill
+│       │   ├── Accounts/             #   Manage (open / close)
+│       │   ├── Settings/             #   Settings (email, password, notification toggles)
+│       │   └── Admin/                #   Users, Openings, Closures, Audit
+│       └── styles.css                # global theme + component styles
+│
+├── nginx/nginx.conf                  # reverse proxy: per-IP rate limits, body caps, forwards real client IP (infra)
+├── docker-compose.yml                # nginx service — serves frontend/dist + proxies to the backend
+├── .github/workflows/ci.yml          # CI/CD: build · tests · flake8 · Bandit · Semgrep · Dependency-Check · Gitleaks · ZAP · deploy
+├── .gitleaks.toml                    # secret-scan allowlist (non-secret token salts + CI-only dummy creds)
+└── README.md                         # this file
+```
+
+---
+
+## 4. How the code is organized for review
+
+The layout is deliberate — these are the conventions a reviewer can rely on:
+
+- **App-factory + blueprints.** `create_app()` (`backend/app/__init__.py`) wires the extensions once;
+  each **blueprint is a self-contained feature** (`auth`, `accounts`, `transactions`, `admin`). To
+  review a feature, read its folder top-to-bottom.
+- **`routes.py` vs `service.py`.** `routes.py` is the thin HTTP surface — it declares which security
+  decorators guard the endpoint, validates input, calls the service, and shapes the response/status.
+  `service.py` holds the **business + security logic** (hashing, TOTP, atomic money movement, audit
+  emission). **No security decision ever lives in a template or in the frontend.**
+- **Security primitives are centralised in `app/security/`.** Crypto, sessions, decorators,
+  validation, lockout, masking and MFA each live in one file, so you audit a control **once** and can
+  find **every** call site from there.
+- **Models mirror the database privilege boundary.** `models/` is split `application` / `session` /
+  `audit`, exactly matching the three schemas and three roles. The audit table is **append-only** and
+  is only ever written through the `audit_writer` engine.
+- **DDL is explicit and ordered.** `sql/01…06` apply in sequence; **`05_grants.sql` is where least
+  privilege is enforced at the database** (e.g. `audit_writer` gets `INSERT` and nothing else).
+- **Tests mirror the modules.** `tests/test_<area>.py` maps 1:1 to the app modules, and the
+  security-control cases (lockout, IDOR → 404, CSRF → 403, idempotency replay, atomic rollback, audit
+  emission) sit right beside the happy-path tests.
+- **Requirement traceability.** Controls carry their **FR-xx / SR-xx** IDs in comments, so any finding
+  maps straight back to the requirement it implements.
+
+**Reading one request end-to-end** (a high-value transfer):
+
+```
+frontend/src/pages/Transactions/Transfer.jsx
+  → frontend/src/api/api.js            (attaches Idempotency-Key + X-CSRFToken)
+    → nginx (rate-limit, forward client IP)
+      → backend/app/blueprints/transactions/routes.py   (decorators: auth → CSRF → role → validation → ownership)
+        → transactions/service.py       (PIN verify via security/crypto.py + lockout.py;
+                                          atomic debit/credit with SELECT ... FOR UPDATE;
+                                          replay-guard via services/idempotency.py)
+          → services/audit.py           (writes the audit event, independent of the business txn)
+          → services/email.py           (emails the receipt, honouring contact_preferences)
+```
+
+---
+
+## 5. Security control → source map
+
+Each Security Requirement maps to concrete, reviewable code:
+
+| Control | Req. | Where to review |
+|---|---|---|
+| Password + PIN hashing (Argon2id, distinct params) | SR-01, SR-12 | `app/security/crypto.py` |
+| TLS/HSTS headers + proxy awareness | SR-02 | `app/__init__.py` (Talisman, ProxyFix) |
+| NRIC / TOTP-seed encryption (AES-256-GCM) + masking | SR-03 | `app/security/crypto.py`, `app/security/masking.py` |
+| Injection / XSS (parameterised ORM + CSP) | SR-04 | all DB access via `models/*`; CSP in `app/__init__.py` |
+| CSRF tokens on state-changing methods | SR-05 | `app/extensions.py` (CSRFProtect), `app/security/decorators.py` |
+| Input allowlist validation | SR-06 | `app/security/validation.py` |
+| Secrets from env (fail-fast) + pinned deps | SR-07 | `app/config.py`, `requirements*.txt`, `.gitleaks.toml` |
+| Idempotency / replay protection | SR-08 | `app/services/idempotency.py`, `transactions/service.py` |
+| Brute-force lockout + generic errors | SR-09 | `app/security/lockout.py`, `blueprints/auth/*` |
+| Rate limiting + query timeout | SR-10 | `nginx/nginx.conf` (per-IP), `app/extensions.py` (statement timeout) |
+| MFA (TOTP + one-time backup codes) | SR-11 | `app/security/mfa.py`, `blueprints/auth/login_service.py` |
+| Transaction-PIN step-up (≥ SGD 1,000) | SR-12 | `blueprints/transactions/service.py`, `app/security/crypto.py` |
+| Server-side session management | SR-13 | `app/security/sessions.py`, `app/security/decorators.py` |
+| Append-only audit logging | SR-14 | `app/services/audit.py`, `models/audit.py`, `sql/05_grants.sql` |
+
+Feature areas (FR) map to the matching blueprint + page folder: **auth/recovery** → `blueprints/auth`
++ `pages/Auth`, **accounts** → `blueprints/accounts` + `pages/Accounts`, **transfer/bill-pay** →
+`blueprints/transactions` + `pages/Transactions`, **admin/RBAC** → `blueprints/admin` + `pages/Admin`.
+
+---
+
+## 6. Reviewer quickstart
+
+Run the same checks CI runs, locally.
+
+**Backend — tests, lint, SAST** (needs a local PostgreSQL with the schemas/roles from `sql/01…06`;
+`scripts/setup_production.sh` provisions one):
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+flake8 .            # PEP 8 (config in setup.cfg)
+bandit -r app       # SAST — no high/medium expected
+pytest              # full suite: happy-path + security-control cases
+```
+
+**Frontend — build + dependency audit:**
+```bash
+cd frontend
+npm install
+npm run build       # production build must succeed with 0 errors
+npm audit           # dependency SCA
+```
+
+**Full security scanners** (Semgrep, Gitleaks, OWASP Dependency-Check, ZAP) run in CI — see the next
+two sections for what they cover and how to reproduce them.
+
+---
+
+## 7. Local development
+
+**Backend.** Configuration is entirely env-driven and the app **fails to start if a required variable
+is missing**. The key variables: `FLASK_SECRET_KEY`, `AES_ENCRYPTION_KEY` (base64 of a 32-byte key),
+`DATABASE_URL_APP`, `DATABASE_URL_AUDIT_WRITER`, `DATABASE_URL_ADMIN_READER`, the `SMTP_*` group,
+`TOTP_ISSUER`, and `FRONTEND_BASE_URL`. Apply the DDL (`sql/01…06`) to a PostgreSQL 16 instance, then
+run the app (see `backend/scripts/setup_production.sh` and `backend/scripts/run.sh`). The production
+image (`backend/Dockerfile`) runs gunicorn with **host networking**, so secrets are passed at runtime
+(`--env-file`) and never baked into the image.
+
+**Frontend.**
+```bash
+cd frontend
+npm install         # add --legacy-peer-deps if you hit a Vite peer-dep conflict
+npm run dev         # Vite dev server on http://localhost:5173 (HMR)
+```
+
+**Serving together.** `docker-compose.yml` runs nginx, which serves the built SPA (`frontend/dist`)
+and proxies the API paths to the backend — deploy **same-origin** so the `SameSite=Strict` session
+cookie and CSRF flow work.
+
+---
+
+## 8. CI/CD & security scanning
+
+`.github/workflows/ci.yml` runs a defence-in-depth pipeline on every push/PR (least-privilege
+`GITHUB_TOKEN`, SHA-pinned actions):
+
+| Job | Tool | Purpose |
+|---|---|---|
+| **frontend** | Vite build + `npm audit` | build the SPA; JS dependency SCA |
+| **backend** | flake8 + Bandit + pytest | PEP 8 lint, Python SAST, full test suite against a throwaway PostgreSQL |
+| **dependency-check** | OWASP Dependency-Check | SCA on the pinned `requirements.txt` |
+| **sast** | Semgrep | OWASP Top Ten + Python + JavaScript rulesets |
+| **secret-scan** | Gitleaks | scans full git history for committed secrets |
+| **dast** | OWASP ZAP (baseline) | boots the app and scans it running |
+| **deploy** | SSH | gated deploy to the server |
+
+The `sast`, `secret-scan`, and `dast` jobs are currently **non-blocking** (they report but don't fail
+the build) while findings are triaged; flip off their `continue-on-error` to make them gate merges.
+Two allowlist notes for reviewers: **`.gitleaks.toml`** documents that the only "secrets" in the repo
+are non-secret `itsdangerous` token salts and deliberately fake CI-only test credentials; and the
+Semgrep step **excludes `nginx/`** because it is infra config, not app code (its one finding was the
+standard `proxy_set_header Host $host` idiom, not exploitable here).
+
+---
+
+## 9. Backend API reference
+
+REST/JSON contract for the frontend and QA. (Base URL is the same origin as the SPA; nginx proxies
+`/auth`, `/accounts`, `/transactions`, `/admin` to the backend.)
+
+### Conventions
 - **Base URL:** same origin as the SPA (e.g. `https://securebank.space`). nginx proxies
   `/auth`, `/accounts`, `/transactions`, `/admin` to the backend.
 - **Content type:** JSON in, JSON out. Send `Content-Type: application/json`.
 - **Money:** always integer minor units (`amount_cents`, `balance_cents`). `1000` = SGD 10.00.
 - **Timestamps:** ISO-8601 UTC. **IDs** are UUID strings; account numbers are 10-digit strings.
 
-## Authentication & sessions
+### Authentication & sessions
 1. **Session cookie** `sb_session` — `Secure`, `HttpOnly`, `SameSite=Strict`. Set on a successful
    MFA login and sent automatically by the browser on same-origin requests (use
    `credentials: "include"` for fetch). It is HttpOnly — JS cannot read it.
@@ -19,7 +328,7 @@ REST/JSON API for the SecureBank app. This document is for the frontend team.
 3. **Two-stage login:** password → MFA. Stage 1 returns a short-lived `mfa_token` (not a session);
    stage 2 verifies a TOTP/backup code and sets the session cookie.
 
-## Error shape
+### Error shape
 ```json
 { "error": "Plain-language message." }
 ```
@@ -40,7 +349,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 
 ---
 
-## Endpoint index
+### Endpoint index
 
 **Auth column:** `Public` = no session · `Auth` = logged-in session cookie · `Admin` = admin role ·
 `Token` = gated by an emailed one-time token (no session needed).
@@ -93,7 +402,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /admin/accounts/{id}/suspend` | Admin | Freeze one account |
 | `POST /admin/accounts/{id}/unsuspend` | Admin | Lift an account freeze |
 
-## Field validation (server-side allowlist — every field is checked before any logic)
+### Field validation (server-side allowlist — every field is checked before any logic)
 
 | Field | Rule |
 |---|---|
@@ -111,16 +420,16 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 
 ---
 
-## Auth — `/auth`
+### Auth — `/auth`
 
-### `GET /auth/csrf`
+#### `GET /auth/csrf`
 Bootstrap a CSRF token for the SPA (call once before doing POSTs).
 ```jsonc
 // 200
 { "csrf_token": "..." }   // send as the X-CSRFToken header on every POST
 ```
 
-### `POST /auth/register`
+#### `POST /auth/register`
 Create a customer (status `pending`). Also **emails a verification link** to the address.
 ```jsonc
 // body
@@ -132,13 +441,13 @@ Password policy: ≥12 chars, upper + lower + digit + symbol. Render the QR from
 show `backup_codes` once. **The account is usable only after BOTH steps below** — confirm TOTP *and*
 verify the emailed link (in either order).
 
-### `POST /auth/register/verify-totp`  — confirm the authenticator
+#### `POST /auth/register/verify-totp`  — confirm the authenticator
 ```jsonc
 { "email": "a@b.com", "code": "123456" }
 // → 200 { "status": "active" }   // or "pending" if the email isn't verified yet
 ```
 
-### `POST /auth/register/totp-setup`  — re-issue the authenticator QR
+#### `POST /auth/register/totp-setup`  — re-issue the authenticator QR
 For a user who registered but closed the QR screen before scanning. Not logged in yet, so it takes
 credentials:
 ```jsonc
@@ -148,7 +457,7 @@ credentials:
 Returns the URI **only** while the account is `pending` with TOTP not yet confirmed; otherwise a
 generic `401` (the seed is never re-exposed once set up). Wrong passwords count toward lockout.
 
-### `POST /auth/register/verify-email`  — confirm the signup email (from the emailed link)
+#### `POST /auth/register/verify-email`  — confirm the signup email (from the emailed link)
 ```jsonc
 { "token": "..." }
 // → 200 { "status": "active" }   // or "pending" if TOTP isn't confirmed yet
@@ -156,7 +465,7 @@ generic `401` (the seed is never re-exposed once set up). Wrong passwords count 
 The link is `<FRONTEND_BASE_URL>/verify-signup?token=…` (24-h expiry). The SPA reads `token` from the
 query string and POSTs it here.
 
-### `POST /auth/login`  (stage 1)
+#### `POST /auth/login`  (stage 1)
 ```jsonc
 { "email": "a@b.com", "password": "..." }  // → 200 { "mfa_token": "..." }
 ```
@@ -169,21 +478,21 @@ query string and POSTs it here.
 Use the flags to prompt the missing step(s) — verify email (offer **`POST /auth/register/resend-email`**)
 and/or confirm TOTP — then retry login.
 
-### `POST /auth/register/resend-email`  — re-send the signup verification link
+#### `POST /auth/register/resend-email`  — re-send the signup verification link
 ```jsonc
 { "email": "a@b.com" }                      // → 200 { "status": "verification_email_sent" }
 ```
 Generic (no enumeration), rate-limited. Sends only if the account is pending with an unverified email.
 
-### `POST /auth/login/mfa`  (stage 2 — TOTP or a backup code; sets the session cookie)
+#### `POST /auth/login/mfa`  (stage 2 — TOTP or a backup code; sets the session cookie)
 ```jsonc
 { "mfa_token": "...", "code": "123456" }   // → 200 { "status": "ok" } + Set-Cookie
 ```
 
-### `POST /auth/logout`
+#### `POST /auth/logout`
 → `200 { "status": "logged_out" }` (revokes session, clears cookie).
 
-### `GET /auth/me`  *(auth required)* — the current user's profile
+#### `GET /auth/me`  *(auth required)* — the current user's profile
 Call after login to know who's signed in and gate UI by role. Masked NRIC only; no secrets.
 ```jsonc
 // → 200
@@ -193,7 +502,7 @@ Call after login to know who's signed in and gate UI by role. Masked NRIC only; 
 // 401 if not logged in
 ```
 
-### `POST /auth/password/change`  *(auth required)* — change password while logged in
+#### `POST /auth/password/change`  *(auth required)* — change password while logged in
 ```jsonc
 { "current_password": "...", "new_password": "N3w!Str0ngPassw0rd" }
 // → 200 { "status": "password_changed" }
@@ -201,7 +510,7 @@ Call after login to know who's signed in and gate UI by role. Masked NRIC only; 
 Re-verifies the current password (`401` if wrong); new password must meet the FR-01 policy and differ
 from the old (`400`). On success **all your *other* sessions are revoked** (this one stays signed in).
 
-### `POST /auth/email`  *(auth required)* — request email change (30-min link to the new address)
+#### `POST /auth/email`  *(auth required)* — request email change (30-min link to the new address)
 ```jsonc
 { "new_email": "new@b.com", "password": "<current password>" }
 // → 200 { "status": "verification_sent" }   (generic, even if the address is already in use)
@@ -213,29 +522,29 @@ address** — the link points at `<FRONTEND_BASE_URL>/verify-email-change?token=
 `POST /auth/email/verify` — **and a security alert to the current/old address** (no token) so the real
 owner is notified if a hijacked session tries to change the email.
 
-### `POST /auth/email/verify`
+#### `POST /auth/email/verify`
 ```jsonc
 { "token": "..." }                          // → 200 { "status": "email_updated", "email": "new@b.com" }
 ```
 
-### `POST /auth/unlock/request`  — for a locked-out account (emails a 30-min unlock link)
+#### `POST /auth/unlock/request`  — for a locked-out account (emails a 30-min unlock link)
 ```jsonc
 { "email": "a@b.com" }                      // → 200 { "status": "unlock_requested" }
 ```
 
-### `POST /auth/unlock/verify`
+#### `POST /auth/unlock/verify`
 ```jsonc
 { "token": "..." }                          // → 200 { "status": "unlocked" }
 ```
 
-### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
+#### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
 Requires **both** email **and** NRIC — a link is sent only if they match an existing account.
 ```jsonc
 { "email": "a@b.com", "nric": "S1234567D" }  // → 200 { "status": "reset_requested" }
 ```
 Always generic `200` (never reveals whether the email/NRIC matched). Rate-limited 10/hour per account.
 
-### `GET /auth/password/reset/check?token=…`  — is the reset link still valid?
+#### `GET /auth/password/reset/check?token=…`  — is the reset link still valid?
 Call this when the `/reset-password` page loads, to show the form or an "expired link" message
 before the user fills anything in. **Read-only** — it does not consume the token.
 ```jsonc
@@ -243,7 +552,7 @@ before the user fills anything in. **Read-only** — it does not consume the tok
 ```
 Returns only a boolean (no account info); no CSRF/session needed.
 
-### `POST /auth/password/reset/verify`  — set a new password from the emailed link
+#### `POST /auth/password/reset/verify`  — set a new password from the emailed link
 Identity (email + NRIC) was already proven at the **request** step, so here you supply the link's
 `token`, the new password, and a **TOTP code (or a one-time backup code)** as a second factor.
 ```jsonc
@@ -260,9 +569,9 @@ On success **all existing sessions are revoked** and any lockout is cleared. The
 
 ---
 
-## Accounts — `/accounts`  *(all require auth)*
+### Accounts — `/accounts`  *(all require auth)*
 
-### `POST /accounts`  — **request** a new account (needs admin approval)
+#### `POST /accounts`  — **request** a new account (needs admin approval)
 The account is created **frozen** (`open_requested`) and can't transact until an admin approves it.
 Only **one opening request may be pending at a time**: while an `open_requested` account
 exists, a second request returns `409`. Request again once it is approved or rejected.
@@ -276,13 +585,13 @@ exists, a second request returns `409`. Request again once it is approved or rej
 ```
 An admin then approves (→ `active`) or rejects (→ `closed`) — see the admin endpoints.
 
-### `GET /accounts`
+#### `GET /accounts`
 → `200 { "accounts": [ { account… }, … ] }`
 
-### `GET /accounts/{account_id}`
+#### `GET /accounts/{account_id}`
 → `200 { account… }` · `404` if not yours.
 
-### `GET /accounts/{account_id}/transactions`
+#### `GET /accounts/{account_id}/transactions`
 Paginated history, 25/page. Query params (all optional): `page` (int ≥1), `type`
 (`transfer`|`bill_payment`), `date_from` / `date_to` (`YYYY-MM-DD`, UTC, inclusive),
 `amount_min` / `amount_max` (cents).
@@ -297,7 +606,7 @@ Paginated history, 25/page. Query params (all optional): `page` (int ≥1), `typ
 `direction` = `debit` (out) / `credit` (in); `counterparty` = other account number, external ref,
 or biller name.
 
-### `GET /accounts/preferences` · `PUT /accounts/preferences`  — notification settings
+#### `GET /accounts/preferences` · `PUT /accounts/preferences`  — notification settings
 ```jsonc
 // GET → 200
 { "notify_on_transfer": true, "notify_on_login": true }
@@ -307,7 +616,7 @@ or biller name.
 `notify_on_transfer` gates transfer + bill-payment receipt emails; `notify_on_login` gates the
 "new sign-in" email. Both default to `true`.
 
-### `POST /accounts/{account_id}/close`  — **request** closure (zero balance + fresh TOTP)
+#### `POST /accounts/{account_id}/close`  — **request** closure (zero balance + fresh TOTP)
 This does **not** close the account immediately — it submits a request an admin must approve.
 ```jsonc
 { "totp_code": "123456" }
@@ -318,9 +627,9 @@ While `close_requested` the account is **frozen** (no transfers in/out) until an
 
 ---
 
-## Transactions — `/transactions`  *(all require auth)*
+### Transactions — `/transactions`  *(all require auth)*
 
-### `POST /transactions/pin`  — set/replace the 6-digit transaction PIN
+#### `POST /transactions/pin`  — set/replace the 6-digit transaction PIN
 ```jsonc
 // FIRST-TIME setup (no PIN yet): password NOT required
 { "pin": "135790" }                         // → 200 { "status": "pin_set" }
@@ -332,17 +641,17 @@ First-time setup skips the password (the caller is already authenticated and no 
 replacing an existing PIN re-verifies it, so a hijacked session can't silently swap it. Use
 `GET /transactions/pin` (`pin_set`) to decide which form to show.
 
-### `GET /transactions/pin`  — has the user set a transaction PIN yet?
+#### `GET /transactions/pin`  — has the user set a transaction PIN yet?
 ```jsonc
 // → 200 { "pin_set": true }   // or false
 ```
 Boolean only (never the PIN/hash). Use it to prompt for PIN setup, or to decide whether to show the
 PIN field on a high-value (≥ SGD 1,000) transfer.
 
-### `GET /transactions/billers`
+#### `GET /transactions/billers`
 → `200 { "billers": [ { "biller_id": "uuid", "biller_name": "Singtel", "biller_category": "telco" } ] }`
 
-### `POST /transactions/transfer`
+#### `POST /transactions/transfer`
 **Header:** `Idempotency-Key: <UUIDv4>` (required; reuse the same key to safely retry).
 Destination = `destination_account_number` (internal) **or** `destination_external_ref` (external).
 **PIN required when `amount_cents` ≥ 100000 (SGD 1,000).**
@@ -358,7 +667,7 @@ Destination = `destination_account_number` (internal) **or** `destination_extern
 `403` PIN required but missing · `401` wrong PIN · `400` insufficient funds · `409` key reused with
 a different body.
 
-### `POST /transactions/bill-payment`
+#### `POST /transactions/bill-payment`
 **Header:** `Idempotency-Key: <UUIDv4>`.
 ```jsonc
 { "source_account_number": "0123456789", "biller_id": "uuid", "amount_cents": 30000 }
@@ -371,7 +680,7 @@ a different body.
 
 ---
 
-## Admin — `/admin`  *(require admin role; customer → 403)*
+### Admin — `/admin`  *(require admin role; customer → 403)*
 
 | Method · Path | Body | Returns |
 |---|---|---|
@@ -392,119 +701,25 @@ a different body.
 
 ---
 
-## Infra
+### Infra
 - `GET /healthz` → `200 { "status": "ok" }` (no auth; liveness probe).
 
-## Typical happy path
+### Typical happy path
 `register` → `register/verify-totp` → `login` → `login/mfa` (cookie set) → `POST /accounts` →
 `GET /accounts` → (set PIN) → `POST /transactions/transfer` → `GET /accounts/{id}/transactions`.
 
-
-#
-# SecureBank Frontend - UI
-
-A premium, secure retail internet banking portal. This repository contains the frontend built to interface with the SecureBank Flask backend. 
-
-The UI is designed with a focus on layered controls, high-contrast accessible design (WCAG 2.1 AA compliant), and a seamless customer experience.
-
-## Tech Stack
-* **Framework:** React.js (v18+)
-* **Build Tool:** Vite (for rapid HMR and optimized production builds)
-* **Routing:** React Router DOM (v6)
-* **Styling:** CSS
-
-## Key Features
-* **Multi-Factor Authentication:** Two-step login flow supporting NRIC/User ID, password, and 6-digit TOTP validation.
-* **Account Recovery:** Secure password reset flows requiring TOTP confirmation.
-* **Role-Based Access Control (RBAC):** Protected routing distinguishing between `customer` and `admin` views.
-* **Secure Transactions:** Fund transfers and bill payments with dynamic step-up authentication (6-digit PIN required for transfers $\ge$ SGD 1,000).
-* **Account Management:** Open new accounts, update contact preferences, and securely close accounts.
-* **Audit & History:** Filterable, paginated transaction history and an administrative operations dashboard.
-
 ---
 
-## 🚀 Local Development Setup
+## 10. Frontend implementation notes
 
-Follow these steps to run the frontend application locally on your machine.
-
-### Prerequisites
-* [Node.js](https://nodejs.org/) (Version 18 or higher recommended)
-* npm (comes pre-installed with Node.js)
-
-### 1. Install Dependencies
-Navigate to the root of the frontend directory and install the required packages.
-```bash
-npm install
-```
-(Note: If you encounter Vite peer-dependency version conflicts, you can safely run npm install --legacy-peer-deps)
-
-### 2. Development Server
-Launch the Vite development server
-```bash
-npm run dev
-```
-The application will be available at http://localhost:5173. Any changes saved to the .jsx or .css files will automatically update in the browser.
-
----
-## Project Structure
-The codebase is modularized to strictly separate routing, layout, and domain-specific pages.
-```
-/ (Project Root)
-├── src/
-│   ├── components/
-│   │   ├── Layout.jsx              # Customer Portal navigation shell (sidebar/header)
-│   │   └── AdminLayout.jsx         # Admin Staff navigation shell
-│   │
-│   ├── pages/
-│   │   ├── Auth/
-│   │   │   ├── Login.jsx                 
-│   │   │   ├── Register.jsx              
-│   │   │   ├── RegisterTotpSetup.jsx     # Authenticator setup page
-│   │   │   ├── ForgotPassword.jsx        
-│   │   │   ├── ResetPassword.jsx         
-│   │   │   ├── SetupPin.jsx              
-│   │   │   └── VerifyEmail.jsx           
-│   │   │
-│   │   ├── Dashboard/
-│   │   │   ├── Overview.jsx              # Customer main dashboard (balances, cards)
-│   │   │   └── History.jsx               # Filterable transaction history
-│   │   │
-│   │   ├── Transactions/
-│   │   │   ├── Transfer.jsx              # Evaluates amounts >= $1,000 to trigger PIN confirmation
-│   │   │   └── PayBill.jsx               # Instant bill payment to registered billers
-│   │   │
-│   │   ├── Accounts/
-│   │   │   └── Manage.jsx                # Open new accounts OR close existing ones
-│   │   │
-│   │   ├── Settings/
-│   │   │   └── Settings.jsx              # Consolidated: Update Email, Password, and UI notification toggles
-│   │   │
-│   │   └── Admin/
-│   │       ├── Users.jsx                 # User directory, NRIC reveal, account lock/suspend toggles
-│   │       ├── Openings.jsx              # Approve/Reject new account requests
-│   │       ├── Closures.jsx              # Approve/Reject account deletion requests
-│   │       └── Audit.jsx                 # System logs and security events
-│   │
-│   ├── App.jsx                     # Global Auth State & "Traffic Cop" Protected Routing
-│   ├── index.css                   # Global CSS (Theme colors, grid layouts, component classes)
-│   └── main.jsx                    # React DOM entry point
-│
-├── index.html                      # Primary HTML template
-├── package.json                    # Project dependencies and run scripts (npm run dev / build)
-├── package-lock.json               # Dependency version lockfile
-└── vite.config.js                  # Vite bundler configuration
-```
----
-
-## Security Implementation Notes
+### Security Implementation Notes
 * **Input Validation:** Financial input fields use strict Regex (e.g., /^\d*\.?\d{0,2}$/) and inputMode="decimal" to prevent invalid data types or malformed floating-point numbers from entering the component state.
 * **XSS Prevention:** React JSX inherently auto-escapes all string inputs. dangerouslySetInnerHTML is strictly prohibited across the codebase.
 * **Masking:** Authenticator code inputs strip all non-numeric characters instantly to prevent injection or formatting errors.
 
 ---
 
-
-## Before integrating
+## 11. Before integrating
 1. **CSRF flow:** call `GET /auth/csrf` once, then send the returned token as `X-CSRFToken` on every POST.
 2. Deploy **same-origin** (one domain via nginx) so the `SameSite=Strict` cookie + CSRF work — don't
    split the API onto a different subdomain.

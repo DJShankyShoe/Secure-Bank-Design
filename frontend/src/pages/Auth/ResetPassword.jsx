@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { toast } from '../../ui/notify.jsx';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from "../../api/api";
@@ -7,13 +7,29 @@ export default function ResetPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token"); // Extracts the ?token=xyz from the URL
-  
+
   const [formData, setFormData] = useState({
     newPassword: '',
     confirmPassword: '',
     authCode: ''
   });
   const [error, setError] = useState('');
+
+  // Gate the form on the token: verify it server-side before rendering anything.
+  // 'checking' shows a spinner, 'valid' shows the form, 'invalid' shows an
+  // "expired link" panel. This is a real round-trip to GET /auth/password/reset/check
+  // (which never consumes the token), so a bad/expired/already-used link never
+  // reaches the form.
+  const [status, setStatus] = useState(token ? 'checking' : 'invalid');
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    api.checkResetToken(token)
+      .then((res) => { if (active) setStatus(res && res.valid ? 'valid' : 'invalid'); })
+      .catch(() => { if (active) setStatus('invalid'); });
+    return () => { active = false; };
+  }, [token]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -92,7 +108,45 @@ export default function ResetPassword() {
       <div style={{ flex: '1', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 8%', minWidth: '500px' }}>
         
         <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
-          
+
+          {status === 'checking' && (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <div style={{ margin: '0 auto 20px', width: '40px', height: '40px', border: '4px solid #E5E7EB', borderTopColor: '#E32636', borderRadius: '50%', animation: 'reset-spin 0.8s linear infinite' }} />
+              <h2 style={{ fontSize: '1.5rem', color: '#111827', margin: '0 0 8px 0', fontWeight: '700' }}>Verifying your reset link…</h2>
+              <p style={{ color: '#6B7280', fontSize: '1rem', margin: 0 }}>This will only take a moment.</p>
+              <style>{`@keyframes reset-spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+          )}
+
+          {status === 'invalid' && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div style={{ margin: '0 auto 20px', width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#FEF2F2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="28" height="28" fill="#DC2626" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a1 1 0 011 1v4a1 1 0 11-2 0V6a1 1 0 011-1zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+              </div>
+              <h2 style={{ fontSize: '1.75rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>This reset link is invalid or has expired</h2>
+              <p style={{ color: '#4B5563', fontSize: '1.05rem', margin: '0 0 28px 0', lineHeight: '1.5' }}>
+                Password reset links are single-use and expire after 30 minutes. Please request a new one.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/forgot-password')}
+                style={{ width: '100%', padding: '16px', backgroundColor: '#E32636', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.2s', boxShadow: '0 4px 6px -1px rgba(227, 38, 54, 0.2)' }}
+                onMouseOver={(e) => e.target.style.backgroundColor = '#B91C1C'}
+                onMouseOut={(e) => e.target.style.backgroundColor = '#E32636'}
+              >
+                Request a new reset link
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                style={{ background: 'none', border: 'none', color: '#6B7280', cursor: 'pointer', padding: '8px', fontSize: '0.95rem', fontWeight: '600', marginTop: '12px' }}
+              >
+                Back to log in
+              </button>
+            </div>
+          )}
+
+          {status === 'valid' && (<>
           <div style={{ marginBottom: '32px' }}>
             <h2 style={{ fontSize: '2rem', color: '#111827', margin: '0 0 12px 0', fontWeight: '700', letterSpacing: '-0.5px' }}>
               Reset your password
@@ -180,6 +234,7 @@ export default function ResetPassword() {
               </button>
             </div>
           </form>
+          </>)}
         </div>
 
       </div>
