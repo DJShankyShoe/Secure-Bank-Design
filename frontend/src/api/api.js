@@ -107,11 +107,12 @@ export const api = {
   // =========================
   // AUTH
   // =========================
-  requestPasswordReset: (email) =>
+  requestPasswordReset: (email, nric) =>
     request("/auth/password/reset/request", {
       method: "POST",
       body: JSON.stringify({
         email,
+        nric,
       }),
     }),
 

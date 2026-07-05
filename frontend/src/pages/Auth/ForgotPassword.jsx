@@ -6,13 +6,15 @@ import { api } from "../../api/api";
 export default function ForgotPassword() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
-  const [recoveryData, setRecoveryData] = useState({ userId: '', email: '' });
+  const [recoveryData, setRecoveryData] = useState({ nric: '', email: '' });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     try {
-      await api.requestPasswordReset(recoveryData.email);
+      // Reset requires BOTH email and NRIC to match — send the NRIC (nric field)
+      // too, or the backend silently sends nothing.
+      await api.requestPasswordReset(recoveryData.email, recoveryData.nric);
       setStep(2);
     } catch (err) {
       toast.error(err.message);
@@ -75,14 +77,14 @@ export default function ForgotPassword() {
           {step === 1 ? (
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label htmlFor="userId" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>NRIC / User ID</label>
+                <label htmlFor="nric" style={{ fontSize: '0.95rem', fontWeight: '600', color: '#374151' }}>NRIC</label>
                 <input 
-                  id="userId"
+                  id="nric"
                   type="text" 
                   required
                   placeholder="e.g. T1234567A" 
-                  value={recoveryData.userId}
-                  onChange={(e) => setRecoveryData({...recoveryData, userId: e.target.value})}
+                  value={recoveryData.nric}
+                  onChange={(e) => setRecoveryData({...recoveryData, nric: e.target.value})}
                   style={{ padding: '14px 16px', border: '2px solid #E5E7EB', borderRadius: '8px', fontSize: '1rem', color: '#111827', outline: 'none', transition: 'border-color 0.2s', backgroundColor: '#F9FAFB' }} 
                   onFocus={(e) => e.target.style.borderColor = '#E32636'}
                   onBlur={(e) => e.target.style.borderColor = '#E5E7EB'}
