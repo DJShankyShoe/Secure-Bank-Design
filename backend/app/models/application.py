@@ -61,9 +61,6 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     nric_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     nric_masked: Mapped[str] = mapped_column(String(9), nullable=False)
-    # Deterministic keyed blind index of the NRIC — enforces one-account-per-NRIC
-    # (UNIQUE) and NRIC lookup without decrypting every row (SR-03, FR-01).
-    nric_hash: Mapped[Optional[bytes]] = mapped_column(LargeBinary, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     totp_seed_encrypted: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
     transaction_pin_hash: Mapped[Optional[str]] = mapped_column(String(255))

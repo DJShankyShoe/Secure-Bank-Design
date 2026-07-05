@@ -13,7 +13,6 @@ CREATE TABLE application.users (
   full_name             varchar(120) NOT NULL,
   nric_encrypted        bytea        NOT NULL,                   -- AES-256-GCM (SR-03)
   nric_masked           varchar(9)   NOT NULL,                   -- e.g. T****518H
-  nric_hash             bytea        UNIQUE,                     -- keyed blind index; one-account-per-NRIC (SR-03, FR-01)
   password_hash         varchar(255) NOT NULL,                  -- Argon2id (SR-01)
   totp_seed_encrypted   bytea,                                  -- AES-256-GCM; NULL until MFA enrolled (SR-11)
   transaction_pin_hash  varchar(255),                           -- Argon2id distinct params; NULL until set (SR-12)
