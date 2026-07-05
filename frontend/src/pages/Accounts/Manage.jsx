@@ -1,61 +1,70 @@
 import { useEffect, useState } from "react";
+import { toast } from '../../ui/notify.jsx';
 import { api } from "../../api/api";
 
 export default function ManageAccount() {
-  const [newEmail, setNewEmail] = useState('');
-  const [totpCode, setTotpCode] = useState('');
-  const [accountToClose, setAccountToClose] = useState('');
+  const [accountType, setAccountType] = useState("savings");
+  const [accountToClose, setAccountToClose] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [accounts, setAccounts] = useState([]);
 
-  //remove hardcoded acc list.
   useEffect(() => {
-  const loadAccounts = async () => {
-    try {
-      const response = await api.getAccounts();
-      setAccounts(response.accounts);
-    } catch (err) {
-      alert(err.message);
-    }
+    const loadAccounts = async () => {
+      try {
+        const response = await api.getAccounts();
+        setAccounts(response.accounts);
+      } catch (err) {
+        toast.error(err.message);
+      }
     };
 
     loadAccounts();
   }, []);
 
-  const handleUpdateEmail = async (e) => {
-  e.preventDefault();
+  const handleOpenAccount = async (e) => {
+    e.preventDefault();
 
     try {
-      const response = await api.requestEmailChange(newEmail);
+      const response = await api.createAccount(accountType);
+      const newAccount = response.account || response;
 
-      alert(response.status);
+      setAccounts((prevAccounts) => [...prevAccounts, newAccount]);
 
+      toast.success(
+        "Account opening requested. It will become available once an admin approves it."
+      );
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleCloseAccount = async (e) => {
-  e.preventDefault();
+    e.preventDefault();
 
     try {
-      await api.closeAccount(
-        accountToClose,
-        totpCode
-      );
+      await api.closeAccount(accountToClose, totpCode);
 
       setAccounts((prevAccounts) =>
-        prevAccounts.filter((account) => account.account_id !== accountToClose)
+        prevAccounts.map((account) =>
+          account.account_id === accountToClose
+            ? { ...account, status: "close_requested" }
+            : account
+        )
       );
 
-      setAccountToClose('');
-      setTotpCode('');
+      setAccountToClose("");
+      setTotpCode("");
 
-      alert("Account closed.");
-
+      toast.success("Account closure requested.");
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
-  }
+  };
+
+  // Only one opening request may be pending admin approval at a time (FR-02).
+  const pendingOpen = accounts.find(
+    (account) => String(account.status || "").toLowerCase() === "open_requested"
+  );
 
   const activeAccounts = accounts.filter((account) => {
     const status = String(account.status || "").toLowerCase();
@@ -63,6 +72,8 @@ export default function ManageAccount() {
     return (
       status !== "closed" &&
       status !== "inactive" &&
+      status !== "close_requested" &&
+      status !== "open_requested" &&
       !account.closed_at &&
       account.is_closed !== true
     );
@@ -73,43 +84,65 @@ export default function ManageAccount() {
       <div className="section-header">
         <div>
           <h2 className="section-title">Account Management</h2>
-          <div className="helper-text">Request a new account or close an existing one.</div>
+          <div className="helper-text">
+            Open a new account or request closure of an existing one.
+          </div>
         </div>
       </div>
 
       <div className="dual-grid">
-        
-        {/* LEFT: Request New Account */}
         <div className="content-card">
           <h3 className="card-title">Open New Account</h3>
-          <p className="helper-text" style={{ marginBottom: '16px' }}>
-            Submit a request to open an additional account. All requests are subject to approval.
+          <p className="helper-text" style={{ marginBottom: "16px" }}>
+            Request a new account. Opening requires admin approval; the opening balance
+            will be SGD 0.00.
           </p>
-          <form onSubmit={handleOpenAccount} className="form-grid">
-            <div className="field">
-              <label>Account Type</label>
-              <select required value={openData.type} onChange={(e) => setOpenData({...openData, type: e.target.value})}>
-                <option value="savings">Savings Account</option>
-                <option value="current">Current Account</option>
-                <option value="fixed_deposit">Fixed Deposit Account</option>
-              </select>
+
+          {pendingOpen ? (
+            <div className="inline-note" style={{ marginTop: "4px" }}>
+              You have an account opening request ({pendingOpen.account_type} ·{" "}
+              {pendingOpen.account_number}) awaiting admin approval. You can request
+              another account once it is approved.
             </div>
-            <div className="hero-actions" style={{ marginTop: '10px' }}>
-              <button type="submit" className="primary-button">Submit Request</button>
-            </div>
-          </form>
+          ) : (
+            <form onSubmit={handleOpenAccount} className="form-grid">
+              <div className="field">
+                <label>Account Type</label>
+                <select
+                  required
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value)}
+                >
+                  <option value="savings">Savings Account</option>
+                  <option value="current">Current Account</option>
+                </select>
+              </div>
+
+              <div className="hero-actions" style={{ marginTop: "10px" }}>
+                <button type="submit" className="primary-button">
+                  Request Account Opening
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
-        {/* RIGHT: Close Existing Account */}
         <div className="content-card">
-          <h3 className="card-title" style={{ color: '#DC2626' }}>Close Account</h3>
-          <p className="helper-text" style={{ marginBottom: '16px' }}>
+          <h3 className="card-title" style={{ color: "#DC2626" }}>
+            Close Account
+          </h3>
+          <p className="helper-text" style={{ marginBottom: "16px" }}>
             Account balance must be exactly SGD 0.00 to proceed. Requires TOTP verification.
           </p>
+
           <form onSubmit={handleCloseAccount} className="form-grid">
             <div className="field">
               <label>Select Account to Close</label>
-              <select required value={closeData.accountId} onChange={(e) => setCloseData({...closeData, accountId: e.target.value})}>
+              <select
+                required
+                value={accountToClose}
+                onChange={(e) => setAccountToClose(e.target.value)}
+              >
                 <option value="">-- Select Account --</option>
                 {activeAccounts.map((account) => (
                   <option
@@ -121,24 +154,31 @@ export default function ManageAccount() {
                 ))}
               </select>
             </div>
+
             <div className="field">
               <label>Authenticator Code (TOTP)</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 inputMode="numeric"
-                maxLength="6" 
-                required 
-                placeholder="123456" 
-                value={closeData.totpCode} 
-                onChange={(e) => setCloseData({...closeData, totpCode: e.target.value.replace(/\D/g, '')})} 
+                maxLength="6"
+                required
+                placeholder="123456"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
               />
             </div>
-            <div className="hero-actions" style={{ marginTop: '10px' }}>
-              <button type="submit" className="secondary-button" style={{ borderColor: '#DC2626', color: '#DC2626' }}>Request Closure</button>
+
+            <div className="hero-actions" style={{ marginTop: "10px" }}>
+              <button
+                type="submit"
+                className="secondary-button"
+                style={{ borderColor: "#DC2626", color: "#DC2626" }}
+              >
+                Request Closure
+              </button>
             </div>
           </form>
         </div>
-
       </div>
     </section>
   );

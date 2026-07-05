@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { toast } from '../../ui/notify.jsx';
 import { api } from "../../api/api";
 
 export default function History() {
@@ -26,7 +27,7 @@ export default function History() {
         }
 
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       }
     };
 
@@ -44,7 +45,7 @@ export default function History() {
         setTransactions(response.items);
 
       } catch (err) {
-        alert(err.message);
+        toast.error(err.message);
       }
     };
 
@@ -58,7 +59,6 @@ export default function History() {
     e.preventDefault();
 
     // Backend filtering can be added later
-    console.log(filters);
   };
 
   const activeAccounts = accounts.filter((account) => {
