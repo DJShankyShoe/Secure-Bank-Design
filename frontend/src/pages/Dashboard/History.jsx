@@ -22,8 +22,16 @@ export default function History() {
 
         setAccounts(response.accounts);
 
-        if (response.accounts.length > 0) {
-          setSelectedAccount(response.accounts[0].account_id);
+        // Default to the first account that can have history — not a pending
+        // 'open_requested' one, which would otherwise be selected but hidden
+        // from the dropdown.
+        const eligible = (response.accounts || []).filter((a) =>
+          ["active", "suspended", "close_requested"].includes(
+            String(a.status || "").toLowerCase()
+          )
+        );
+        if (eligible.length > 0) {
+          setSelectedAccount(eligible[0].account_id);
         }
 
       } catch (err) {
@@ -61,16 +69,14 @@ export default function History() {
     // Backend filtering can be added later
   };
 
-  const activeAccounts = accounts.filter((account) => {
-  const status = String(account.status || "").toLowerCase();
-
-    return (
-      status !== "closed" &&
-      status !== "inactive" &&
-      !account.closed_at &&
-      account.is_closed !== true
-    );
-  });
+  // Show accounts that can actually have a transaction history. A pre-approval
+  // 'open_requested' account has none (and isn't usable yet), so it's excluded;
+  // the frozen states (suspended / close_requested) still have viewable history.
+  const activeAccounts = accounts.filter((account) =>
+    ["active", "suspended", "close_requested"].includes(
+      String(account.status || "").toLowerCase()
+    )
+  );
 
 
   return (

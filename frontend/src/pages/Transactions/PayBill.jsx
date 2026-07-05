@@ -30,10 +30,15 @@ export default function PayBill() {
         setAccounts(loadedAccounts);
         setBillers(loadedBillers);
 
+        // Default the source to the first ACTIVE account (not a pending
+        // 'open_requested' one, which is excluded from the dropdown and can't pay).
+        const firstActive = loadedAccounts.find(
+          (a) => String(a.status || "").toLowerCase() === "active"
+        );
         setPaymentData((prev) => ({
           ...prev,
           billerId: loadedBillers[0]?.biller_id || '',
-          sourceAccount: loadedAccounts[0]?.account_number || '',
+          sourceAccount: firstActive?.account_number || '',
         }));
 
       } catch (err) {
@@ -81,16 +86,12 @@ export default function PayBill() {
     }
   };
 
-  const activeAccounts = accounts.filter((account) => {
-  const status = String(account.status || "").toLowerCase();
-
-    return (
-      status !== "closed" &&
-      status !== "inactive" &&
-      !account.closed_at &&
-      account.is_closed !== true
-    );
-  });
+  // Only 'active' accounts can pay bills — the backend rejects any other status
+  // (open_requested / suspended / close_requested / closed all freeze the account).
+  // Allowlist rather than denylist so a new status can never silently slip through.
+  const activeAccounts = accounts.filter(
+    (account) => String(account.status || "").toLowerCase() === "active"
+  );
 
 
   return (
