@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { api } from "./api/api";
+import { api, setUnauthorizedHandler } from "./api/api";
 
 // Layouts
 import Layout from './components/Layout.jsx';
@@ -75,6 +75,20 @@ export default function App() {
         // No valid session (401) — stay logged out.
       })
       .finally(() => setAuthReady(true));
+  }, []);
+
+  // Any 401 from the API (expired/revoked/missing session) clears auth; the route
+  // guards then redirect to /login — for both customer and admin areas.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      sessionStorage.removeItem("securebank_user");
+      setAuth({
+        isAuthenticated: false,
+        role: null,
+        emailVerified: true,
+        pinSetupCompleted: true
+      });
+    });
   }, []);
 
   const handleLogout = async () => {
@@ -165,7 +179,13 @@ export default function App() {
         />
 
         {/* CUSTOMER AREA */}
-        <Route element={<Layout onLogout={handleLogout} />}>
+        <Route
+          element={
+            auth.isAuthenticated && auth.role === 'customer'
+              ? <Layout onLogout={handleLogout} />
+              : <Navigate to="/login" replace />
+          }
+        >
           <Route path="/dashboard" element={<ProtectedCustomerRoute auth={auth}><Dashboard /></ProtectedCustomerRoute>} />
           <Route path="/history" element={<ProtectedCustomerRoute auth={auth}><History /></ProtectedCustomerRoute>} />
           <Route path="/transfer" element={<ProtectedCustomerRoute auth={auth}><Transfer /></ProtectedCustomerRoute>} />
@@ -175,7 +195,13 @@ export default function App() {
         </Route>
 
         {/* ADMIN AREA */}
-        <Route element={<AdminLayout onLogout={handleLogout} />}>
+        <Route
+          element={
+            auth.isAuthenticated && auth.role === 'admin'
+              ? <AdminLayout onLogout={handleLogout} />
+              : <Navigate to="/login" replace />
+          }
+        >
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/openings" element={<AdminOpenings />} />
           <Route path="/admin/closures" element={<AdminClosures />} />

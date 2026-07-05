@@ -6,6 +6,14 @@ export function resetCsrf() {
   csrfToken = null;
 }
 
+// Called whenever the server rejects a request as unauthenticated (401) — e.g. an
+// expired/revoked/missing session. App registers a handler that clears auth state
+// so the route guards send the user back to /login.
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
 /**
  * Get CSRF token
  */
@@ -63,6 +71,11 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
     if (isCsrfError && retryOnCsrf) {
       await initCsrf(true);
       return request(endpoint, options, false);
+    }
+
+    // Session invalid/expired/missing → let the app clear auth + redirect to login.
+    if (response.status === 401 && onUnauthorized) {
+      onUnauthorized();
     }
 
     const error = new Error(errorMessage);
