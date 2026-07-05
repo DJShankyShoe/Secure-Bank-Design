@@ -1,6 +1,0 @@
-Your SecureBank account was locked after too many failed attempts.
-Click the link below within 30 minutes to unlock it:
-
-{{ unlock_url }}
-
-If this wasn't you, please contact support.

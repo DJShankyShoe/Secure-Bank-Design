@@ -1,1 +1,0 @@
-Your payment of {{ amount_cents }} cents to {{ biller_name }} (ref {{ reference_number }}) is complete.

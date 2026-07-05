@@ -1,7 +1,0 @@
-There was a new sign-in to your SecureBank account.
-
-When:  {{ when }} UTC
-From:  {{ source_ip }}
-
-If this was you, no action is needed. If it wasn't, reset your password immediately
-and contact support.

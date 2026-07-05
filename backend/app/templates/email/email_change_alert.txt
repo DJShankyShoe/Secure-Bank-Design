@@ -1,8 +1,0 @@
-A request was made to change the email address on your SecureBank account
-to: {{ new_email }}
-
-The change is NOT complete yet — it only takes effect after the link sent to the
-new address is confirmed.
-
-If you did NOT request this, someone may have access to your account. Reset your
-password immediately and contact support — do this before the change is confirmed.
