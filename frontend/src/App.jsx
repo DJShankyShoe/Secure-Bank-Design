@@ -30,6 +30,16 @@ import AdminOpenings from './pages/Admin/Openings.jsx';
 import AdminClosures from './pages/Admin/Closures.jsx';
 import AdminAudit from './pages/Admin/Audit.jsx';
 
+// Staff (admin + superadmin) + Superadmin Pages
+import StaffSettings from './pages/Staff/StaffSettings.jsx';
+import SuperadminRoles from './pages/Superadmin/Roles.jsx';
+
+// Where each role lands after login / when hitting /login while authenticated.
+const HOME_FOR_ROLE = (role) =>
+  role === 'admin' ? '/console/users'
+    : role === 'superadmin' ? '/super/roles'
+    : '/dashboard';
+
 // ============================
 // Protected Route
 // ============================
@@ -146,7 +156,7 @@ export default function App() {
             !auth.isAuthenticated ? (
               <Login onLoginSuccess={handleLoginSuccess} />
             ) : (
-              <Navigate to={auth.role === 'admin' ? "/console/users" : "/dashboard"} replace />
+              <Navigate to={HOME_FOR_ROLE(auth.role)} replace />
             )
           }
         />
@@ -217,6 +227,19 @@ export default function App() {
           <Route path="/console/openings" element={<AdminOpenings />} />
           <Route path="/console/closures" element={<AdminClosures />} />
           <Route path="/console/audit" element={<AdminAudit />} />
+          <Route path="/console/settings" element={<StaffSettings />} />
+        </Route>
+
+        {/* SUPERADMIN AREA (role + admin management only) */}
+        <Route
+          element={
+            auth.isAuthenticated && auth.role === 'superadmin'
+              ? <AdminLayout onLogout={handleLogout} />
+              : <Navigate to="/login" replace />
+          }
+        >
+          <Route path="/super/roles" element={<SuperadminRoles />} />
+          <Route path="/super/settings" element={<StaffSettings />} />
         </Route>
 
         {/* FALLBACK */}

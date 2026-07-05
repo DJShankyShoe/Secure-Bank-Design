@@ -440,4 +440,38 @@ export const api = {
         reason,
       }),
     }),
+
+  // =========================
+  // SUPERADMIN (role + admin management; superadmin role only)
+  // =========================
+
+  // Directory of all users with their role/status (for role management).
+  // Optional ?q= search (email/name) and ?role= filter.
+  getRoleDirectory: (q = "", role = "") => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (role) params.set("role", role);
+    const qs = params.toString();
+    return request(`/superadmin/users${qs ? `?${qs}` : ""}`, { method: "GET" });
+  },
+
+  // Assign a role (customer | admin | superadmin) to a user.
+  setUserRole: (userId, role) =>
+    request(`/superadmin/users/${userId}/role`, {
+      method: "POST",
+      body: JSON.stringify({ role }),
+    }),
+
+  // Suspend an admin/superadmin account (reason required).
+  suspendAdmin: (userId, reason) =>
+    request(`/superadmin/users/${userId}/suspend`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Reactivate a suspended/locked admin/superadmin account.
+  reactivateAdmin: (userId) =>
+    request(`/superadmin/users/${userId}/reactivate`, {
+      method: "POST",
+    }),
 };

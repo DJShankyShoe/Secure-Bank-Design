@@ -18,7 +18,7 @@ CREATE TABLE application.users (
   totp_seed_encrypted   bytea,                                  -- AES-256-GCM; NULL until MFA enrolled (SR-11)
   transaction_pin_hash  varchar(255),                           -- Argon2id distinct params; NULL until set (SR-12)
   role                  varchar(16)  NOT NULL
-                          CHECK (role IN ('customer','admin')), -- server-verified every request (FR-08)
+                          CHECK (role IN ('customer','admin','superadmin')), -- server-verified every request (FR-08)
   account_status        varchar(16)  NOT NULL DEFAULT 'active'
                           CHECK (account_status IN ('pending','active','locked','suspended','closed')),
                                                                 -- pending=registered, TOTP not yet confirmed (FR-01);

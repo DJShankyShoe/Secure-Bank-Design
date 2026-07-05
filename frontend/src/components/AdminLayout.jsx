@@ -16,9 +16,15 @@ export default function AdminLayout({ onLogout }) {
     .slice(0, 2)
     .toUpperCase();
 
-  // Live pending-request counts drive the sidebar badges.
+  // Superadmins manage roles/admins only; admins do customer oversight. The same
+  // shell serves both, with role-appropriate navigation.
+  const isSuper = storedUser.role === 'superadmin';
+
+  // Live pending-request counts drive the sidebar badges (admin only — the
+  // superadmin has no access to the customer-account endpoint).
   const [counts, setCounts] = useState({ open_requested: 0, close_requested: 0 });
   useEffect(() => {
+    if (isSuper) return;
     api.getAdminAccounts()
       .then((res) => {
         const accts = res.accounts || [];
@@ -28,14 +34,20 @@ export default function AdminLayout({ onLogout }) {
         });
       })
       .catch(() => {});
-  }, [location.pathname]);
+  }, [location.pathname, isSuper]);
 
-  const adminNavItems = [
-    { id: "users", label: "User Directory", badge: "", path: "/console/users" },
-    { id: "openings", label: "Account Openings", badge: counts.open_requested || "", path: "/console/openings" },
-    { id: "closures", label: "Account Closures", badge: counts.close_requested || "", path: "/console/closures" },
-    { id: "audit", label: "System Audit Logs", badge: "", path: "/console/audit" }
-  ];
+  const adminNavItems = isSuper
+    ? [
+        { id: "roles", label: "Role Management", badge: "", path: "/super/roles" },
+        { id: "settings", label: "Account Settings", badge: "", path: "/super/settings" },
+      ]
+    : [
+        { id: "users", label: "User Directory", badge: "", path: "/console/users" },
+        { id: "openings", label: "Account Openings", badge: counts.open_requested || "", path: "/console/openings" },
+        { id: "closures", label: "Account Closures", badge: counts.close_requested || "", path: "/console/closures" },
+        { id: "audit", label: "System Audit Logs", badge: "", path: "/console/audit" },
+        { id: "settings", label: "Account Settings", badge: "", path: "/console/settings" },
+      ];
 
   return (
     <div className="app-shell" style={{ backgroundColor: '#f3f4f6' }}>
@@ -44,7 +56,7 @@ export default function AdminLayout({ onLogout }) {
           <div className="brand-mark" style={{ backgroundColor: '#E32636' }}>SB</div>
           <div className="brand-text">
             <strong style={{ color: 'white' }}>SecureBank</strong>
-            <span style={{ color: '#9CA3AF' }}>Internal Staff Portal</span>
+            <span style={{ color: '#9CA3AF' }}>{isSuper ? 'Superadmin Console' : 'Internal Staff Portal'}</span>
           </div>
         </div>
         <div className="topbar-actions">
@@ -61,7 +73,7 @@ export default function AdminLayout({ onLogout }) {
           </div>
           
           <div className="nav-group">
-            <div className="nav-label">Operations</div>
+            <div className="nav-label">{isSuper ? 'Administration' : 'Operations'}</div>
             {adminNavItems.map((item) => {
               const isActive = location.pathname.includes(item.path);
               return (

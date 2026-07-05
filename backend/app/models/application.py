@@ -42,7 +42,7 @@ class User(Base):
 
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint("role IN ('customer','admin')", name="users_role_check"),
+        CheckConstraint("role IN ('customer','admin','superadmin')", name="users_role_check"),
         CheckConstraint(
             "account_status IN ('pending','active','locked','suspended','closed')",
             name="users_account_status_check",

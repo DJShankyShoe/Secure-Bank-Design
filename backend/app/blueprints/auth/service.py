@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import pyotp
 from flask import current_app
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from ...config import Config
@@ -36,6 +36,30 @@ from ...services.audit import emit_audit
 
 _BACKUP_CODE_COUNT = 10
 _BACKUP_CODE_BYTES = 5  # -> 10 hex chars per code
+
+# The FIRST-ever account bootstraps the initial superadmin (FR-08), so the system
+# has a role manager without a manual step. Constant key for the transaction
+# advisory lock that serialises the empty-table check + insert.
+_SUPERADMIN_BOOTSTRAP_LOCK = 0x5EC0_ADD1
+
+
+def _count_users(session) -> int:
+    return session.execute(select(func.count()).select_from(User)).scalar_one()
+
+
+def _pick_registration_role(session) -> str:
+    """Return the role for a new registration — ``superadmin`` iff no account exists.
+
+    The first user becomes the initial superadmin (FR-08) so the system has a role
+    manager with no manual bootstrap. The cheap unlocked count is >0 for every
+    normal registration (no contention once seeded); only when it reads 0 do we take
+    a transaction advisory lock and re-check, so two concurrent first registrations
+    can't both claim superadmin.
+    """
+    if _count_users(session) != 0:
+        return "customer"
+    session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _SUPERADMIN_BOOTSTRAP_LOCK})
+    return "superadmin" if _count_users(session) == 0 else "customer"
 
 
 class AuthServiceError(Exception):
@@ -120,6 +144,9 @@ def register_customer(
                        action_detail={"reason": reason})
             raise DuplicateRegistration()
 
+        # First-ever account becomes the initial superadmin (FR-08).
+        bootstrap_role = _pick_registration_role(session)
+
         user = User(
             email=email,
             email_verified=False,
@@ -129,7 +156,7 @@ def register_customer(
             nric_hash=nric_hash,
             password_hash=crypto.hash_password(password),
             totp_seed_encrypted=crypto.aes_encrypt(seed, key),
-            role="customer",
+            role=bootstrap_role,
             account_status="pending",  # not login-usable until TOTP confirmed
         )
         session.add(user)
@@ -163,9 +190,11 @@ def register_customer(
         "success",
         source_ip=source_ip,
         actor_user_id=user_id,
-        actor_role="customer",
+        actor_role=bootstrap_role,
         target_user_id=user_id,
-        action_detail={"email": email, "nric_masked": mask_nric(nric)},
+        action_detail={"email": email, "nric_masked": mask_nric(nric),
+                       "role": bootstrap_role,
+                       "superadmin_bootstrap": bootstrap_role == "superadmin"},
     )
 
     # Email a signup verification link — the account activates only once BOTH the

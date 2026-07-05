@@ -59,15 +59,30 @@ def _validate_reason(raw: str) -> str:
 # Read views
 # --------------------------------------------------------------------------- #
 
-def list_users(search: Optional[str] = None) -> list[dict[str, Any]]:
-    """List users with masked NRIC (admin view, FR-08).
+def _require_customer(session, user_id: uuid.UUID) -> User:
+    """Load a user and reject (404) unless they are a ``customer`` (FR-08).
 
-    Optional ``search`` filters by a case-insensitive partial match on email or
-    full name (parameterised ILIKE — no raw SQL, SR-04).
+    Admins may only view/act on customers — never other admins or superadmins.
+    Returns 404 (TargetNotFound), not 403, so the response never confirms that a
+    privileged account with that id exists.
+    """
+    user = session.get(User, user_id)
+    if user is None or user.role != "customer":
+        raise TargetNotFound()
+    return user
+
+
+def list_users(search: Optional[str] = None) -> list[dict[str, Any]]:
+    """List **customers** with masked NRIC (admin view, FR-08).
+
+    Admins see customers only — admin/superadmin accounts are managed in the
+    superadmin area, never listed here. Optional ``search`` filters by a
+    case-insensitive partial match on email or full name (parameterised ILIKE — no
+    raw SQL, SR-04).
     """
     session = db.app_session()
     try:
-        stmt = select(User).order_by(User.created_at.desc())
+        stmt = select(User).where(User.role == "customer").order_by(User.created_at.desc())
         if search and search.strip():
             like = f"%{search.strip()}%"
             stmt = stmt.where(or_(User.email.ilike(like), User.full_name.ilike(like)))
@@ -103,9 +118,10 @@ def list_all_accounts() -> list[dict[str, Any]]:
 
 
 def list_user_accounts(*, user_id: uuid.UUID) -> list[dict[str, Any]]:
-    """List one user's accounts for the admin user-directory drill-down (FR-08)."""
+    """List one **customer's** accounts for the admin user-directory drill-down (FR-08)."""
     session = db.app_session()
     try:
+        _require_customer(session, user_id)  # admins drill into customers only
         rows = session.execute(
             select(Account).where(Account.user_id == user_id)
             .order_by(Account.created_at.desc())
@@ -166,9 +182,7 @@ def suspend_user(*, admin_id: uuid.UUID, target_user_id: uuid.UUID, reason: str,
     reason = _validate_reason(reason)
     session = db.app_session()
     try:
-        user = session.get(User, target_user_id)
-        if user is None:
-            raise TargetNotFound()
+        user = _require_customer(session, target_user_id)
         user.account_status = "suspended"
         session.execute(
             update(SessionRecord).where(SessionRecord.user_id == target_user_id)
@@ -186,9 +200,7 @@ def unlock_user(*, admin_id: uuid.UUID, target_user_id: uuid.UUID, source_ip: st
     """Reactivate a locked/suspended user and clear lock counters (FR-08, SR-09)."""
     session = db.app_session()
     try:
-        user = session.get(User, target_user_id)
-        if user is None:
-            raise TargetNotFound()
+        user = _require_customer(session, target_user_id)
         user.account_status = "active"
         user.failed_login_count = 0
         user.locked_until = None
@@ -394,9 +406,7 @@ def reveal_nric(*, admin_id: uuid.UUID, target_user_id: uuid.UUID,
     key = current_app.extensions["securebank_config"].aes_encryption_key
     session = db.app_session()
     try:
-        user = session.get(User, target_user_id)
-        if user is None:
-            raise TargetNotFound()
+        user = _require_customer(session, target_user_id)
         full = crypto.aes_decrypt(user.nric_encrypted, key).decode("utf-8")
         masked = user.nric_masked
     finally:

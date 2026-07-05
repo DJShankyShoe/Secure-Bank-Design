@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import click
 from flask import Flask, jsonify
 from flask_wtf.csrf import CSRFError
 from werkzeug.exceptions import HTTPException
@@ -115,18 +116,65 @@ def _register_cli(app: Flask) -> None:
         counts = run_cleanup()
         print(f"cleanup complete: {counts}")
 
+    @app.cli.command("set-role")
+    @click.argument("email")
+    @click.argument("role")
+    def set_role_command(email: str, role: str) -> None:
+        """Set a user's role by email (customer|admin|superadmin).
+
+        Bootstraps the first superadmin (no UI path exists until one exists) and is
+        server-only. Revokes the user's sessions so the new role takes effect, and
+        writes an audit event (FR-08, SR-13/14):
+
+            flask set-role admin@securebank.space superadmin
+        """
+        from sqlalchemy import select, update
+
+        from .extensions import db
+        from .models import SessionRecord, User
+        from .services.audit import emit_audit
+
+        valid = ("customer", "admin", "superadmin")
+        if role not in valid:
+            raise SystemExit(f"role must be one of {valid}, got {role!r}")
+
+        session = db.app_session()
+        try:
+            user = session.execute(
+                select(User).where(User.email == email.strip().lower())
+            ).scalar_one_or_none()
+            if user is None:
+                raise SystemExit(f"no user with email {email!r}")
+            old_role = user.role
+            user.role = role
+            session.execute(
+                update(SessionRecord).where(SessionRecord.user_id == user.user_id)
+                .values(revoked=True)
+            )
+            user_id = user.user_id
+            session.commit()
+        finally:
+            session.close()
+
+        emit_audit("CLI_SET_ROLE", "success", source_ip="127.0.0.1", actor_user_id=None,
+                   actor_role="system", target_user_id=user_id,
+                   action_detail={"old_role": old_role, "new_role": role, "via": "cli"})
+        print(f"{email}: {old_role} -> {role} (sessions revoked)")
+
 
 def _register_blueprints(app: Flask) -> None:
     """Register every business-area blueprint."""
     from .blueprints.accounts import bp as accounts_bp
     from .blueprints.admin import bp as admin_bp
     from .blueprints.auth import bp as auth_bp
+    from .blueprints.superadmin import bp as superadmin_bp
     from .blueprints.transactions import bp as transactions_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(accounts_bp)
     app.register_blueprint(transactions_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(superadmin_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
