@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import string
 
 import pytest
 
@@ -29,6 +30,20 @@ _DEFAULTS = {
 }
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
+
+
+def unique_nric() -> str:
+    """Return a fresh, format-valid Singapore NRIC unique across test runs.
+
+    NRIC is now uniqueness-constrained per account (like email), and the test DB
+    persists between runs, so every successful registration needs a distinct NRIC.
+    Randomising the prefix letter, 7 digits, and suffix letter gives ~1.3e9 values
+    so collisions are negligible even as rows accumulate. Matches ``[STFGM]\\d{7}[A-Z]``.
+    """
+    prefix = secrets.choice("STFGM")
+    digits = f"{secrets.randbelow(10_000_000):07d}"
+    suffix = secrets.choice(string.ascii_uppercase)
+    return f"{prefix}{digits}{suffix}"
 
 
 def activate_signup_email(app, email, source_ip="127.0.0.1"):
