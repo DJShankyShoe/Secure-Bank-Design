@@ -194,12 +194,20 @@ jobs:
       # Rulesets cover OWASP Top Ten plus language-specific checks for the Python
       # backend and the JavaScript/React frontend. --error sets a non-zero exit on
       # findings (which the job-level continue-on-error currently swallows).
+      #
+      # --exclude nginx: this SAST targets the app code (Python/JS). The nginx
+      # reverse-proxy config is infra (out of backend scope) and only tripped the
+      # generic "request-host-used" rule on the standard `proxy_set_header Host
+      # $host;` idiom — not exploitable here (nginx listens on loopback behind a
+      # Cloudflare tunnel with no server_name, and the app builds all links from
+      # FRONTEND_BASE_URL, never the request Host header).
       - name: Semgrep scan (OWASP Top Ten + Python + JavaScript)
         run: >-
           semgrep scan
           --config p/owasp-top-ten
           --config p/python
           --config p/javascript
+          --exclude nginx
           --error
           --sarif --output semgrep.sarif
 
