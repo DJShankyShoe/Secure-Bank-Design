@@ -5,7 +5,7 @@ import { api } from "../../api/api";
 export default function History() {
 
   const [filters, setFilters] = useState({
-    dateRange: "",
+    dateFrom: "",
     type: "",
     minAmount: ""
   });
@@ -43,30 +43,37 @@ export default function History() {
   }, []);
 
 //load transaction
+  const loadTransactions = async (accountId, currentFilters) => {
+    try {
+      const amountMin = currentFilters.minAmount
+        ? Math.round(parseFloat(currentFilters.minAmount) * 100)
+        : null;
+      if (currentFilters.minAmount && (!Number.isFinite(amountMin) || amountMin < 0)) {
+        toast.error("Min amount must be a positive number.");
+        return;
+      }
+      const response = await api.getTransactions(accountId, {
+        type: currentFilters.type || undefined,
+        dateFrom: currentFilters.dateFrom || undefined,
+        amountMin,
+      });
+      setTransactions(response.items || []);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   useEffect(() => {
     if (!selectedAccount) return;
-
-    const loadTransactions = async () => {
-      try {
-        const response = await api.getTransactions(selectedAccount);
-
-        setTransactions(response.items);
-
-      } catch (err) {
-        toast.error(err.message);
-      }
-    };
-
-    loadTransactions();
-
+    loadTransactions(selectedAccount, filters);
+    // Only re-run when the account changes — filter changes apply via "Apply Filters".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccount]);
-
-  const filteredTransactions = transactions;
 
   const handleFilterSubmit = (e) => {
     e.preventDefault();
-
-    // Backend filtering can be added later
+    if (!selectedAccount) return;
+    loadTransactions(selectedAccount, filters);
   };
 
   // Show accounts that can actually have a transaction history. A pre-approval
@@ -112,28 +119,30 @@ export default function History() {
 
           <div className="field">
             <label>Date Range (Start)</label>
-            <input 
-              type="date" 
-              onChange={(e) => setFilters({...filters, dateRange: e.target.value})} 
+            <input
+              type="date"
+              value={filters.dateFrom}
+              onChange={(e) => setFilters({...filters, dateFrom: e.target.value})}
             />
           </div>
 
           <div className="field">
             <label>Transaction Type</label>
-            <select onChange={(e) => setFilters({...filters, type: e.target.value})}>
+            <select value={filters.type} onChange={(e) => setFilters({...filters, type: e.target.value})}>
               <option value="">All Transactions</option>
-              <option value="Transfer">Transfers</option>
-              <option value="Bill Payment">Bill Payments</option>
-              <option value="Card Spend">Card Spend</option>
-              <option value="Refund">Refunds</option>
+              <option value="transfer">Transfers</option>
+              <option value="bill_payment">Bill Payments</option>
             </select>
           </div>
           <div className="field">
             <label>Min Amount (SGD)</label>
-            <input 
-              type="number" 
-              placeholder="e.g. 100.00" 
-              onChange={(e) => setFilters({...filters, minAmount: e.target.value})} 
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="e.g. 100.00"
+              value={filters.minAmount}
+              onChange={(e) => setFilters({...filters, minAmount: e.target.value})}
             />
           </div>
           <button type="submit" className="primary-button" style={{ marginBottom: '8px', padding: '10px 24px' }}>
@@ -153,8 +162,8 @@ export default function History() {
             <div style={{ textAlign: 'right' }}>Status</div>
           </div>
           
-          {filteredTransactions.length > 0 ? (
-            filteredTransactions.map((txn) => {
+          {transactions.length > 0 ? (
+            transactions.map((txn) => {
               const amount = txn.amount_cents / 100;
               const isPositive = txn.direction === "credit";
               return (

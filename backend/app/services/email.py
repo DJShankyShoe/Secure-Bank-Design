@@ -41,6 +41,16 @@ def render_email(template_name: str, **context) -> str:
     return render_template(f"email/{template_name}", **context)
 
 
+def format_sgd(amount_cents: int) -> str:
+    """Format minor units as a human-readable SGD amount for email bodies.
+
+    Integer-only arithmetic (no float), matching the frontend's own
+    ``cents / 100`` display convention (e.g. 123456 -> "SGD 1,234.56").
+    """
+    dollars, cents = divmod(amount_cents, 100)
+    return f"SGD {dollars:,}.{cents:02d}"
+
+
 def action_link(path: str, token: str) -> str:
     """Build a clickable SPA link carrying a one-time token (FR-04/FR-09).
 

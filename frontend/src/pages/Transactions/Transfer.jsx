@@ -67,6 +67,11 @@ export default function Transfer() {
 
     const amount_cents = Math.round(parseFloat(formData.amount) * 100);
 
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) {
+      toast.error("Enter an amount greater than SGD 0.00.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       await api.transfer(
@@ -183,7 +188,6 @@ export default function Transfer() {
               <button type="submit" className="primary-button" disabled={submitting || loading}>
                 {submitting ? "Processing..." : "Continue"}
               </button>
-              <button type="button" className="secondary-button">Save beneficiary</button>
             </div>
           </div>
 

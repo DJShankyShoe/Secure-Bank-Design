@@ -191,18 +191,22 @@ export default function App() {
         {/* EMAIL CHANGE VERIFICATION (link sent to the NEW address, FR-04) */}
         <Route path="/verify-email-change" element={<VerifyEmail mode="change" />} />
 
-        {/* BANK PIN SETUP (NOT OTP) */}
+        {/* BANK PIN SETUP (NOT OTP) — requires an authenticated session */}
         <Route
           path="/setup-pin"
           element={
-            <SetupPin
-              onSetupComplete={() =>
-                setAuth(prev => ({
-                  ...prev,
-                  pinSetupCompleted: true
-                }))
-              }
-            />
+            auth.isAuthenticated ? (
+              <SetupPin
+                onSetupComplete={() =>
+                  setAuth(prev => ({
+                    ...prev,
+                    pinSetupCompleted: true
+                  }))
+                }
+              />
+            ) : (
+              <Navigate to="/login" replace />
+            )
           }
         />
 

@@ -70,6 +70,11 @@ export default function PayBill() {
 
     const amount_cents = Math.round(parseFloat(paymentData.amount) * 100);
 
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) {
+      toast.error("Enter an amount greater than SGD 0.00.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       await api.billPayment(
@@ -159,7 +164,6 @@ export default function PayBill() {
               <button type="submit" className="primary-button" disabled={submitting || loading}>
                 {submitting ? "Processing..." : "Confirm Payment"}
               </button>
-              <button type="button" className="secondary-button">Payment history</button>
             </div>
           </form>
         </div>

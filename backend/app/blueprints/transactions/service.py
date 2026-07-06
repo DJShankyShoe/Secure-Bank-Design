@@ -31,7 +31,7 @@ from ...security.validation import (
     validate_transaction_pin,
 )
 from ...services.audit import emit_audit
-from ...services.email import notify_user, render_email
+from ...services.email import format_sgd, notify_user, render_email
 from ...services.idempotency import (
     compute_request_hash,
     make_record,
@@ -341,7 +341,7 @@ def transfer(
                               "amount_cents": amount_cents, "pin_verified": pin_verified})
     notify_user(user_id=user_id, pref_attr="notify_on_transfer",
                 subject="SecureBank transfer receipt",
-                body=render_email("transfer_receipt.txt", amount_cents=amount_cents,
+                body=render_email("transfer_receipt.txt", amount=format_sgd(amount_cents),
                                   reference_number=receipt["reference_number"]))
     return receipt
 
@@ -483,7 +483,7 @@ def bill_payment(
                               "amount_cents": amount_cents, "biller_id": receipt["biller_id"]})
     notify_user(user_id=user_id, pref_attr="notify_on_transfer",
                 subject="SecureBank bill payment receipt",
-                body=render_email("bill_payment_receipt.txt", amount_cents=amount_cents,
+                body=render_email("bill_payment_receipt.txt", amount=format_sgd(amount_cents),
                                   biller_name=biller_name,
                                   reference_number=receipt["reference_number"]))
     return receipt

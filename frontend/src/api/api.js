@@ -260,10 +260,17 @@ export const api = {
       method: "GET",
     }),
 
-  getTransactions: (accountId, page = 1) =>
-    request(`/accounts/${accountId}/transactions?page=${page}`, {
+  // Backend filter params (SR-06 validated): page, type ('transfer'/'bill_payment'),
+  // date_from (YYYY-MM-DD), amount_min (integer cents).
+  getTransactions: (accountId, { page = 1, type, dateFrom, amountMin } = {}) => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (type) params.set("type", type);
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (amountMin != null) params.set("amount_min", String(amountMin));
+    return request(`/accounts/${accountId}/transactions?${params.toString()}`, {
       method: "GET",
-    }),
+    });
+  },
 
   // 401 here means "wrong step-up TOTP code", not an invalid session — skip the
   // global auth-redirect so a typo doesn't bounce the user to /login.
