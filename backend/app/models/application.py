@@ -252,3 +252,33 @@ class PendingEmailChange(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class Notification(Base):
+    """An in-app alert shown in the customer's notification bell (FR-10).
+
+    User-facing, customer-readable copy of important account events (lockout,
+    admin suspension of the user or one of their accounts, request outcomes).
+    Distinct from the ``audit`` schema, which is append-only and NOT customer-
+    readable (SR-14) — this table is the user-visible channel. Read-tracking via
+    ``read_at`` (NULL = unread); rows are kept as history (no delete).
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = ({"schema": "application"},)
+
+    notification_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("application.users.user_id"), nullable=False, index=True
+    )
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(String(1000), nullable=False)
+    read_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

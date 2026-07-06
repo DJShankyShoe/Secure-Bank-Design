@@ -167,6 +167,7 @@ def _register_blueprints(app: Flask) -> None:
     from .blueprints.accounts import bp as accounts_bp
     from .blueprints.admin import bp as admin_bp
     from .blueprints.auth import bp as auth_bp
+    from .blueprints.notifications import bp as notifications_bp
     from .blueprints.superadmin import bp as superadmin_bp
     from .blueprints.transactions import bp as transactions_bp
 
@@ -175,6 +176,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(transactions_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(superadmin_bp)
+    app.register_blueprint(notifications_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:

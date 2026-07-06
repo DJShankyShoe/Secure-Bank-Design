@@ -106,3 +106,17 @@ CREATE TABLE application.pending_email_changes (
 );
 CREATE INDEX idx_pending_email_user_id ON application.pending_email_changes (user_id);
 CREATE INDEX idx_pending_email_expires ON application.pending_email_changes (expires_at);
+
+-- notifications (FR-10) — user-facing in-app alerts (the customer "bell").
+-- Distinct from the append-only, non-customer-readable audit schema (SR-14):
+-- this is the user-visible channel for lockout + admin actions on the user.
+CREATE TABLE application.notifications (
+  notification_id  uuid PRIMARY KEY,
+  user_id          uuid NOT NULL REFERENCES application.users (user_id),
+  category         varchar(32)  NOT NULL,   -- e.g. account_locked, user_suspended
+  title            varchar(120) NOT NULL,
+  body             varchar(1000) NOT NULL,
+  read_at          timestamptz,             -- NULL = unread
+  created_at       timestamptz  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_user_id ON application.notifications (user_id, created_at DESC);

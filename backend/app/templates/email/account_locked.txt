@@ -1,0 +1,10 @@
+Hello {{ full_name }},
+
+Your SecureBank account has been locked after multiple failed sign-in attempts.
+
+This is an automatic security measure. Your account will unlock by itself in
+{{ minutes }} minutes — you can simply try signing in again after that.
+
+If this was NOT you, someone may be trying to access your account. Please contact
+support as soon as possible, and consider resetting your password once you regain
+access.

@@ -86,7 +86,8 @@ def test_config_thresholds_centralised():
 # --------------------------------------------------------------------------- #
 
 def test_blueprints_registered(app):
-    assert set(app.blueprints) == {"auth", "accounts", "transactions", "admin", "superadmin"}
+    assert set(app.blueprints) == {
+        "auth", "accounts", "transactions", "admin", "superadmin", "notifications"}
 
 
 def test_security_headers_present(client):

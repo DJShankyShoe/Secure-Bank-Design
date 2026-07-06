@@ -1,0 +1,10 @@
+Hello {{ full_name }},
+
+One of your SecureBank accounts ({{ account_number }}) has been suspended by an
+administrator.
+
+Reason: {{ reason }}
+
+While this account is suspended, transfers and payments from it are frozen. Your
+other accounts are unaffected. If you believe this was done in error, please
+contact support.

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import SessionTimer from './SessionTimer.jsx';
+import NotificationBell from './NotificationBell.jsx';
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", badge: "", path: "/dashboard" },
@@ -42,8 +43,9 @@ export default function Layout({ onLogout }) {
             <span>Personal Internet Banking</span>
           </div>
         </div>
-        <div className="topbar-actions">
+        <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <p><SessionTimer onExpire={onLogout} /></p>
+          <NotificationBell />
           <button className="ghost-button" onClick={onLogout}>Log out</button>
         </div>
       </header>

@@ -3,8 +3,8 @@
 ``send_email`` delivers a plain-text message through the configured SMTP relay.
 In production the SMTP delivery runs in a background daemon thread so the request
 never blocks on the relay — this also removes an email-send timing side-channel
-from the anti-enumeration flows (FR-09 password reset, SR-09 unlock): the response
-time no longer depends on whether an email was actually sent. Under ``TESTING`` it
+from the anti-enumeration flows (FR-09 password reset): the response time no longer
+depends on whether an email was actually sent. Under ``TESTING`` it
 is suppressed and captured synchronously in an in-app outbox so tests stay
 deterministic. ``notify_user`` consults ``contact_preferences``
 (``notify_on_transfer`` / ``notify_on_login``) before sending.

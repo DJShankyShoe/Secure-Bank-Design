@@ -1,0 +1,8 @@
+Hello {{ full_name }},
+
+Your SecureBank account has been suspended by an administrator.
+
+Reason: {{ reason }}
+
+While suspended, you will not be able to sign in or use banking services. If you
+believe this was done in error, please contact support.

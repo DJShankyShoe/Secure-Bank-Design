@@ -8,17 +8,53 @@ admin action that touches a customer is audited with the admin as actor (FR-08).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from flask import current_app
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 
 from ...extensions import db
 from ...models import Account, AuditEvent, SessionRecord, User
 from ...security import crypto
 from ...services.audit import emit_audit
+
+logger = logging.getLogger(__name__)
+
+
+def _alert_user(user_id: uuid.UUID, *, category: str, title: str, body: str,
+                email_subject: Optional[str] = None, email_template: Optional[str] = None,
+                **email_ctx: Any) -> None:
+    """Notify a customer of an admin action: in-app alert (always) + optional email.
+
+    The in-app notification is the user-facing record of the action (FR-10); an
+    email is sent too for the higher-impact events (suspension/closure). Best-effort
+    and self-contained — looks up the address on its own session and never raises,
+    so alerting can't roll back or break the admin action that triggered it.
+    """
+    from ...services.email import render_email, send_email
+    from ...services.notifications import notify
+
+    notify(user_id, category, title, body)
+    if not (email_subject and email_template):
+        return
+    session = db.app_session()
+    try:
+        user = session.get(User, user_id)
+        email = user.email if user else None
+        full_name = user.full_name if user else ""
+    finally:
+        session.close()
+    if not email:
+        return
+    try:
+        send_email(to=email, subject=email_subject,
+                   body=render_email(email_template, full_name=full_name, **email_ctx))
+    except Exception:  # pragma: no cover - alert is non-critical
+        logger.exception("Failed to send admin-action email to user %s", user_id)
+
 
 _AUDIT_PAGE_SIZE = 50
 
@@ -137,12 +173,63 @@ def list_user_accounts(*, user_id: uuid.UUID) -> list[dict[str, Any]]:
         session.close()
 
 
+def _resolve_user_names(id_strings) -> dict[str, str]:
+    """Map ``user_id`` (str) -> display name for audit rendering (FR-08).
+
+    Uses the ``app_user`` engine because ``admin_reader`` can't read
+    ``application.users``. Only names users an audit event already references, and
+    works for staff (admins/superadmins) too — whom the customer-scoped user list
+    omits, which would otherwise leave their rows showing a raw UUID.
+    """
+    ids = []
+    for raw in id_strings:
+        try:
+            ids.append(uuid.UUID(raw))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    if not ids:
+        return {}
+    session = db.app_session()
+    try:
+        rows = session.execute(
+            select(User.user_id, User.full_name, User.email).where(User.user_id.in_(ids))
+        ).all()
+        return {str(r.user_id): (r.full_name or r.email) for r in rows}
+    finally:
+        session.close()
+
+
+def _staff_user_ids() -> set[uuid.UUID]:
+    """Return the set of admin/superadmin ``user_id``s (FR-08).
+
+    Read via the ``app_user`` engine (``admin_reader`` can't see
+    ``application.users``). Used to scope the admin audit view to customer-related
+    events only — staff-to-staff activity (role changes, staff logins) is hidden
+    from admins and visible only to superadmins.
+    """
+    session = db.app_session()
+    try:
+        rows = session.execute(
+            select(User.user_id).where(User.role.in_(("admin", "superadmin")))
+        ).all()
+        return {r.user_id for r in rows}
+    finally:
+        session.close()
+
+
 def read_audit_log(*, page: int = 1, event_type: Optional[str] = None,
-                   user_id: Optional[uuid.UUID] = None) -> dict[str, Any]:
+                   user_id: Optional[uuid.UUID] = None,
+                   restrict_to_customers: bool = True) -> dict[str, Any]:
     """Read the audit log via the SELECT-only admin_reader engine (FR-08, SR-14).
 
     Optional filters: ``event_type`` (exact action type) and ``user_id`` (every
     event where the user is the actor **or** the target). Both compose.
+
+    ``restrict_to_customers`` scopes the view by the caller's role (FR-08):
+    ``True`` (admin, customer oversight) returns only events that involve a
+    customer — i.e. the actor is a customer *or* the target is a non-staff user —
+    so staff-to-staff activity (superadmin role changes, staff logins) stays
+    hidden. ``False`` (superadmin) returns every event, unfiltered.
     """
     page = max(page, 1)
     reader = db.admin_reader_session()
@@ -153,6 +240,19 @@ def read_audit_log(*, page: int = 1, event_type: Optional[str] = None,
         if user_id is not None:
             stmt = stmt.where(or_(AuditEvent.actor_user_id == user_id,
                                   AuditEvent.target_user_id == user_id))
+        if restrict_to_customers:
+            # Customer-oversight scope: show an event only if it involves a
+            # customer — the actor's stored role is 'customer', or the target is
+            # a user who is not staff. Staff-only events (no customer party) are
+            # withheld from admins and remain visible only to superadmins.
+            staff_ids = _staff_user_ids()
+            target = AuditEvent.target_user_id
+            if staff_ids:
+                target_is_customer = and_(target.isnot(None), target.notin_(staff_ids))
+            else:
+                target_is_customer = target.isnot(None)
+            stmt = stmt.where(or_(AuditEvent.actor_role == "customer",
+                                  target_is_customer))
         stmt = (stmt.order_by(AuditEvent.event_timestamp.desc())
                 .limit(_AUDIT_PAGE_SIZE).offset((page - 1) * _AUDIT_PAGE_SIZE))
         rows = reader.execute(stmt).scalars().all()
@@ -167,9 +267,18 @@ def read_audit_log(*, page: int = 1, event_type: Optional[str] = None,
             "outcome": e.outcome,
             "action_detail": e.action_detail,
         } for e in rows]
-        return {"items": items, "page": page, "page_size": _AUDIT_PAGE_SIZE}
     finally:
         reader.close()
+
+    # Resolve actor/target ids to names so the audit view shows people, not UUIDs
+    # (works for staff too, whom the customer-scoped user list omits).
+    names = _resolve_user_names(
+        {i for it in items for i in (it["actor_user_id"], it["target_user_id"]) if i}
+    )
+    for it in items:
+        it["actor_name"] = names.get(it["actor_user_id"])
+        it["target_name"] = names.get(it["target_user_id"])
+    return {"items": items, "page": page, "page_size": _AUDIT_PAGE_SIZE}
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +303,10 @@ def suspend_user(*, admin_id: uuid.UUID, target_user_id: uuid.UUID, reason: str,
     emit_audit("ADMIN_SUSPEND_USER", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=target_user_id,
                action_detail={"reason": reason})
+    _alert_user(target_user_id, category="user_suspended", title="Account suspended",
+                body=f"Your account was suspended by an administrator. Reason: {reason}",
+                email_subject="SecureBank: your account has been suspended",
+                email_template="account_suspended.txt", reason=reason)
 
 
 def unlock_user(*, admin_id: uuid.UUID, target_user_id: uuid.UUID, source_ip: str) -> None:
@@ -209,6 +322,9 @@ def unlock_user(*, admin_id: uuid.UUID, target_user_id: uuid.UUID, source_ip: st
         session.close()
     emit_audit("ADMIN_UNLOCK_USER", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=target_user_id)
+    _alert_user(target_user_id, category="user_reactivated", title="Account reactivated",
+                body="Your account has been reactivated by an administrator. "
+                     "You can sign in again.")
 
 
 def admin_close_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
@@ -230,6 +346,7 @@ def admin_close_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: s
                                       "account_id": str(account_id)})
             raise CannotClose()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "closed"
         account.closed_at = _now()
         session.commit()
@@ -238,6 +355,11 @@ def admin_close_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: s
     emit_audit("ADMIN_CLOSE_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
+    _alert_user(owner, category="account_closed", title="Account closed",
+                body=f"Your account {acct_no} was closed by an administrator. "
+                     f"Reason: {reason}",
+                email_subject="SecureBank: an account was closed",
+                email_template="bank_account_closed.txt", account_number=acct_no, reason=reason)
     return {"account_id": str(account_id), "status": "closed"}
 
 
@@ -264,6 +386,7 @@ def approve_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID,
                                       "account_id": str(account_id)})
             raise CannotClose()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "closed"
         account.closed_at = _now()
         session.commit()
@@ -272,6 +395,9 @@ def approve_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID,
     emit_audit("ADMIN_CLOSURE_APPROVE", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"account_id": str(account_id)})
+    _alert_user(owner, category="request_approved", title="Closure request approved",
+                body=f"Your request to close account {acct_no} was approved. "
+                     f"The account is now closed.")
     return {"account_id": str(account_id), "status": "closed"}
 
 
@@ -291,6 +417,7 @@ def reject_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason
         if account is None or account.status != "close_requested":
             raise TargetNotFound()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "active"
         session.commit()
     finally:
@@ -298,6 +425,9 @@ def reject_account_closure(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason
     emit_audit("ADMIN_CLOSURE_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
+    _alert_user(owner, category="request_rejected", title="Closure request rejected",
+                body=f"Your request to close account {acct_no} was rejected. "
+                     f"Reason: {reason}. The account is active again.")
     return {"account_id": str(account_id), "status": "active"}
 
 
@@ -315,6 +445,7 @@ def approve_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID,
         if account is None or account.status != "open_requested":
             raise TargetNotFound()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "active"
         session.commit()
     finally:
@@ -322,6 +453,8 @@ def approve_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID,
     emit_audit("ADMIN_OPEN_APPROVE", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"account_id": str(account_id)})
+    _alert_user(owner, category="request_approved", title="Account opening approved",
+                body=f"Your new account {acct_no} has been approved and is now active.")
     return {"account_id": str(account_id), "status": "active"}
 
 
@@ -349,6 +482,8 @@ def reject_account_opening(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason
     emit_audit("ADMIN_OPEN_REJECT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
+    _alert_user(owner, category="request_rejected", title="Account opening rejected",
+                body=f"Your account opening request was rejected. Reason: {reason}.")
     return {"account_id": str(account_id), "status": "closed"}
 
 
@@ -369,6 +504,7 @@ def suspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
         if account is None or account.status != "active":
             raise TargetNotFound()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "suspended"
         session.commit()
     finally:
@@ -376,6 +512,11 @@ def suspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID, reason: str,
     emit_audit("ADMIN_SUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"reason": reason, "account_id": str(account_id)})
+    _alert_user(owner, category="account_suspended", title="Account suspended",
+                body=f"Your account {acct_no} was suspended by an administrator. "
+                     f"Reason: {reason}",
+                email_subject="SecureBank: an account was suspended",
+                email_template="bank_account_frozen.txt", account_number=acct_no, reason=reason)
     return {"account_id": str(account_id), "status": "suspended"}
 
 
@@ -390,6 +531,7 @@ def unsuspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID,
         if account is None or account.status != "suspended":
             raise TargetNotFound()
         owner = account.user_id
+        acct_no = account.account_number
         account.status = "active"
         session.commit()
     finally:
@@ -397,6 +539,8 @@ def unsuspend_account(*, admin_id: uuid.UUID, account_id: uuid.UUID,
     emit_audit("ADMIN_UNSUSPEND_ACCOUNT", "success", source_ip=source_ip, actor_user_id=admin_id,
                actor_role="admin", target_user_id=owner,
                action_detail={"account_id": str(account_id)})
+    _alert_user(owner, category="account_unsuspended", title="Account reactivated",
+                body=f"Your account {acct_no} was reactivated by an administrator.")
     return {"account_id": str(account_id), "status": "active"}
 
 

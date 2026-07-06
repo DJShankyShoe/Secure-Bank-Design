@@ -15,7 +15,6 @@ from ...services.audit import client_ip
 from . import bp
 from .email_service import EmailChangeError, request_email_change, verify_email_change
 from .login_service import (
-    UnlockLinkInvalid,
     VerificationRequired,
     change_password,
     check_reset_token,
@@ -23,10 +22,8 @@ from .login_service import (
     login_password,
     logout,
     reissue_totp_provisioning,
-    request_account_unlock,
     request_password_reset,
     resend_signup_verification,
-    verify_account_unlock,
     verify_password_reset,
     verify_signup_email,
 )
@@ -264,26 +261,6 @@ def verify_email():
     except EmailChangeError as exc:
         return jsonify(error=exc.message), exc.status
     return jsonify(status="email_updated", email=new_email), 200
-
-
-@bp.post("/unlock/request")
-def unlock_request():
-    """Request a 30-min self-service unlock link for a locked account (SR-09).
-
-    Body: ``email``. Always returns a generic 200 (anti-enumeration).
-    """
-    request_account_unlock(email=_json().get("email", ""), source_ip=client_ip())
-    return jsonify(status="unlock_requested"), 200
-
-
-@bp.post("/unlock/verify")
-def unlock_verify():
-    """Consume an unlock token and reactivate the account (SR-09). Body: ``token``."""
-    try:
-        verify_account_unlock(token=_json().get("token", ""), source_ip=client_ip())
-    except UnlockLinkInvalid as exc:
-        return jsonify(error=exc.message), exc.status
-    return jsonify(status="unlocked"), 200
 
 
 @bp.post("/password/reset/request")

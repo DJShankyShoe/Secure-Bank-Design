@@ -1,0 +1,8 @@
+Hello {{ full_name }},
+
+One of your SecureBank accounts ({{ account_number }}) has been closed by an
+administrator.
+
+Reason: {{ reason }}
+
+If you believe this was done in error, please contact support.
