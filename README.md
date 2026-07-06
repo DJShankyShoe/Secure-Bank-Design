@@ -97,7 +97,8 @@ SecureBank/
 │   │   │   │   └── email_service.py   #   email-change request/verify flow
 │   │   │   ├── accounts/              # open-request/approve, view, paginated history, close-request
 │   │   │   ├── transactions/          # transfer (atomic + PIN step-up), bill payment, PIN mgmt, idempotency
-│   │   │   └── admin/                 # RBAC oversight: users/accounts, approvals, NRIC reveal, audit read
+│   │   │   ├── admin/                 # RBAC oversight (customer-scoped): users/accounts, approvals, NRIC reveal, audit read
+│   │   │   └── superadmin/             # role assignment + admin/staff management; full-scope audit read
 │   │   │
 │   │   ├── models/                   # SQLAlchemy models, SPLIT BY SCHEMA (mirrors the DB privilege boundary)
 │   │   │   ├── base.py               #   declarative base / shared column mixins
@@ -352,7 +353,13 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 ### Endpoint index
 
 **Auth column:** `Public` = no session · `Auth` = logged-in session cookie · `Admin` = admin role ·
-`Token` = gated by an emailed one-time token (no session needed).
+`Superadmin` = superadmin role · `Token` = gated by an emailed one-time token (no session needed).
+
+**Three roles (FR-08), verified server-side on every request.** `customer` = own data only.
+`admin` = customer oversight **only** (users/accounts, approvals, NRIC reveal, customer-scoped audit);
+acting on a non-customer returns `404`. `superadmin` = admin/role management **only** (a distinct role,
+**not** a superset of admin): assign roles, suspend/reactivate staff, and read the **full** audit log.
+The **first-ever account** to register is bootstrapped as `superadmin`; everyone else defaults to `customer`.
 
 | Method · Path | Auth | Purpose |
 |---|---|---|
@@ -390,7 +397,7 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `GET /admin/users` | Admin | List/search users (`?q=`) |
 | `GET /admin/users/{id}/accounts` | Admin | One user's accounts (drill-down) |
 | `GET /admin/accounts` | Admin | List all accounts |
-| `GET /admin/audit` | Admin | Read audit log (`?type=`, `?user=`) |
+| `GET /admin/audit` | Admin | Read audit log — **customer-scoped** (`?type=`, `?user=`); staff-to-staff events hidden |
 | `GET /admin/users/{id}/nric` | Admin | Reveal full NRIC (audited) |
 | `POST /admin/users/{id}/suspend` | Admin | Suspend a user |
 | `POST /admin/users/{id}/unlock` | Admin | Unlock/reactivate a user |
@@ -401,6 +408,11 @@ Auth failures are intentionally generic (`"Invalid credentials."`).
 | `POST /admin/accounts/{id}/closure/reject` | Admin | Reject a close request |
 | `POST /admin/accounts/{id}/suspend` | Admin | Freeze one account |
 | `POST /admin/accounts/{id}/unsuspend` | Admin | Lift an account freeze |
+| `GET /superadmin/users` | Superadmin | List the user directory with roles (`?q=`, `?role=`) |
+| `POST /superadmin/users/{id}/role` | Superadmin | Assign a role (`customer`/`admin`/`superadmin`) |
+| `POST /superadmin/users/{id}/suspend` | Superadmin | Suspend an admin/superadmin (reason required) |
+| `POST /superadmin/users/{id}/reactivate` | Superadmin | Reactivate a suspended admin/superadmin |
+| `GET /superadmin/audit` | Superadmin | Read the **full** audit log (every event, incl. staff-to-staff) |
 
 ### Field validation (server-side allowlist — every field is checked before any logic)
 
@@ -687,7 +699,7 @@ a different body.
 | `GET /admin/users?q=` | — | `{ "users": [ {user_id,email,full_name,nric_masked,role,account_status,created_at} ] }` — optional `q` = case-insensitive search on email or name |
 | `GET /admin/accounts` | — | `{ "accounts": [ {account_id,user_id,account_number,account_type,balance_cents,status} ] }` |
 | `GET /admin/users/{id}/accounts` | — | `{ "accounts": [ {account_id,account_number,account_type,balance_cents,status} ] }` — one user's accounts (directory drill-down) |
-| `GET /admin/audit?page=&type=&user=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,target_user_id,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` — `type`=event type; `user`=UUID (events where the user is actor **or** target; `400` if not a UUID); filters compose |
+| `GET /admin/audit?page=&type=&user=` | — | `{ "items": [ {event_id,event_timestamp,event_type,actor_user_id,actor_role,actor_name,target_user_id,target_name,source_ip,outcome,action_detail} ], "page":1, "page_size":50 }` — **customer-scoped**: only events involving a customer (actor is a customer **or** target is a non-staff user); staff-to-staff activity (role changes, staff logins) is withheld and visible only via `GET /superadmin/audit`. `actor_name`/`target_name` are server-resolved for display. `type`=event type; `user`=UUID (actor **or** target; `400` if not a UUID); filters compose |
 | `POST /admin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "status": "suspended" }` (reason required) |
 | `POST /admin/users/{id}/unlock` | — | `{ "status": "active" }` |
 | `GET /admin/users/{id}/nric` | — | `{ "user_id": "…", "nric": "S1234567D", "nric_masked": "S****567D" }` (audited) |
@@ -698,6 +710,23 @@ a different body.
 | `POST /admin/accounts/{id}/closure/reject` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "active" }` (reject → reactivate; reason required) |
 | `POST /admin/accounts/{id}/suspend` | `{ "reason": "..." }` | `{ "account_id": "…", "status": "suspended" }` (reversible freeze of one account; reason required; only from `active`) |
 | `POST /admin/accounts/{id}/unsuspend` | — | `{ "account_id": "…", "status": "active" }` (lift the freeze; only from `suspended`) |
+
+---
+
+### Superadmin — `/superadmin`  *(require superadmin role; customer/admin → 403)*
+
+A **distinct** role — admin/role management **only**, never customer oversight. Every action is
+audited with the superadmin as actor and **revokes the target's sessions** on any privilege change
+(SR-13). Guards: **no self-action** (a superadmin can't change/suspend their own account — another
+superadmin must), and the **last active superadmin** can't be demoted or suspended.
+
+| Method · Path | Body | Returns |
+|---|---|---|
+| `GET /superadmin/users?q=&role=` | — | `{ "users": [ {user_id,email,full_name,role,account_status,created_at} ] }` — full directory; optional `q` search + `role` filter |
+| `POST /superadmin/users/{id}/role` | `{ "role": "customer\|admin\|superadmin" }` | `{ "user_id": "…", "role": "admin" }` — `400` invalid role · `403` self-action · `409` demoting the last superadmin |
+| `POST /superadmin/users/{id}/suspend` | `{ "reason": "..." }` | `{ "account_status": "suspended" }` — staff only; reason required; `404` if target isn't an admin/superadmin |
+| `POST /superadmin/users/{id}/reactivate` | — | `{ "account_status": "active" }` — lift a staff suspension/lock |
+| `GET /superadmin/audit?page=&type=&user=` | — | Same shape as `/admin/audit` but **full scope** — every event, including staff-to-staff (role changes, admin/superadmin logins) that the admin view withholds |
 
 ---
 
