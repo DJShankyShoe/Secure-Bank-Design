@@ -33,12 +33,19 @@ import AdminAudit from './pages/Admin/Audit.jsx';
 // Staff (admin + superadmin) + Superadmin Pages
 import StaffSettings from './pages/Staff/StaffSettings.jsx';
 import SuperadminRoles from './pages/Superadmin/Roles.jsx';
+import SuperadminAudit from './pages/Superadmin/Audit.jsx';
 
 // Where each role lands after login / when hitting /login while authenticated.
+// Returns null for an unrecognised role so callers can avoid an infinite
+// redirect loop: /login only bounces an authenticated user to a home it can name,
+// and each role's home is an area whose guard accepts that same role. A role with
+// no home (unknown/未mapped) falls through to the login screen instead of
+// ping-ponging between /dashboard and /login (which white-screens the app).
 const HOME_FOR_ROLE = (role) =>
   role === 'admin' ? '/console/users'
     : role === 'superadmin' ? '/super/roles'
-    : '/dashboard';
+    : role === 'customer' ? '/dashboard'
+    : null;
 
 // ============================
 // Protected Route
@@ -153,10 +160,10 @@ export default function App() {
         <Route
           path="/login"
           element={
-            !auth.isAuthenticated ? (
-              <Login onLoginSuccess={handleLoginSuccess} />
-            ) : (
+            auth.isAuthenticated && HOME_FOR_ROLE(auth.role) ? (
               <Navigate to={HOME_FOR_ROLE(auth.role)} replace />
+            ) : (
+              <Login onLoginSuccess={handleLoginSuccess} />
             )
           }
         />
@@ -239,6 +246,7 @@ export default function App() {
           }
         >
           <Route path="/super/roles" element={<SuperadminRoles />} />
+          <Route path="/super/audit" element={<SuperadminAudit />} />
           <Route path="/super/settings" element={<StaffSettings />} />
         </Route>
 

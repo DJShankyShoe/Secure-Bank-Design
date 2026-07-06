@@ -221,3 +221,67 @@ def test_superadmin_reactivates_admin(require_db, sa_app, super_client):
                       json={"reason": "policy"}, base_url=_HTTPS)
     r = super_client.post(f"/superadmin/users/{target['user_id']}/reactivate", base_url=_HTTPS)
     assert r.status_code == 200 and r.get_json()["account_status"] == "active"
+
+
+# --------------------------------------------------------------------------- #
+# Audit-log visibility scope (FR-08): admin sees customer-related events only;
+# superadmin sees everything, including staff-to-staff activity.
+# --------------------------------------------------------------------------- #
+
+def test_admin_denied_superadmin_audit_403(require_db, sa_app):
+    admin = _client(sa_app, _register(sa_app, role="admin"))
+    assert admin.get("/superadmin/audit", base_url=_HTTPS).status_code == 403
+
+
+def test_admin_audit_hides_staff_to_staff_superadmin_sees_it(require_db, sa_app, super_client):
+    admin = _client(sa_app, _register(sa_app, role="admin"))
+    # A staff-to-staff event: a superadmin promotes a user (who thereby becomes
+    # staff) — actor=superadmin, target=admin, no customer party involved.
+    target = _register(sa_app)
+    super_client.post(f"/superadmin/users/{target['user_id']}/role",
+                      json={"role": "admin"}, base_url=_HTTPS)
+    tid = target["user_id"]
+    # Admin (customer-oversight scope) must NOT see the role-management event.
+    r = admin.get(f"/admin/audit?type=SUPERADMIN_SET_ROLE&user={tid}", base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["items"] == []
+    # Superadmin (full scope) DOES see it.
+    r2 = super_client.get(f"/superadmin/audit?type=SUPERADMIN_SET_ROLE&user={tid}", base_url=_HTTPS)
+    assert r2.status_code == 200 and len(r2.get_json()["items"]) >= 1
+
+
+def test_admin_audit_includes_admin_to_customer(require_db, sa_app):
+    admin = _client(sa_app, _register(sa_app, role="admin"))
+    customer = _register(sa_app)
+    admin.post(f"/admin/users/{customer['user_id']}/suspend",
+               json={"reason": "audit scope test"}, base_url=_HTTPS)
+    # An admin→customer action stays visible in the admin (customer-oversight) view.
+    r = admin.get(f"/admin/audit?type=ADMIN_SUSPEND_USER&user={customer['user_id']}",
+                  base_url=_HTTPS)
+    assert r.status_code == 200 and len(r.get_json()["items"]) >= 1
+
+
+# --------------------------------------------------------------------------- #
+# NRIC reveal (SR-03): superadmin can reveal any user's full NRIC (audited);
+# customers/admins are denied the superadmin endpoint.
+# --------------------------------------------------------------------------- #
+
+def test_superadmin_reveals_customer_nric_audited(require_db, sa_app, super_client):
+    target = _register(sa_app)
+    r = super_client.get(f"/superadmin/users/{target['user_id']}/nric", base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["nric"] == target["nric"]
+    assert _audit_count(sa_app, event_type="NRIC_REVEAL",
+                        target_user_id=target["user_id"], actor_role="superadmin") == 1
+
+
+def test_superadmin_reveals_staff_nric(require_db, sa_app, super_client):
+    # Unlike the admin reveal (customers only), a superadmin can reveal staff NRICs.
+    target = _register(sa_app, role="admin")
+    r = super_client.get(f"/superadmin/users/{target['user_id']}/nric", base_url=_HTTPS)
+    assert r.status_code == 200 and r.get_json()["nric"] == target["nric"]
+
+
+def test_admin_denied_superadmin_nric_403(require_db, sa_app):
+    admin = _client(sa_app, _register(sa_app, role="admin"))
+    other = _register(sa_app)
+    assert admin.get(f"/superadmin/users/{other['user_id']}/nric",
+                     base_url=_HTTPS).status_code == 403

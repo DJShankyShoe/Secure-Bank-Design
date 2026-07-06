@@ -39,6 +39,7 @@ export default function AdminLayout({ onLogout }) {
   const adminNavItems = isSuper
     ? [
         { id: "roles", label: "Role Management", badge: "", path: "/super/roles" },
+        { id: "audit", label: "System Audit Logs", badge: "", path: "/super/audit" },
         { id: "settings", label: "Account Settings", badge: "", path: "/super/settings" },
       ]
     : [

@@ -15,6 +15,8 @@ export default function SuperadminRoles() {
   const [search, setSearch] = useState('');
   const [applied, setApplied] = useState('');
   const [busyId, setBusyId] = useState(null);
+  // user_id -> full NRIC, populated on demand when a row's NRIC is revealed.
+  const [nricById, setNricById] = useState({});
 
   // The signed-in superadmin — used to disable actions on their own row
   // (the backend also blocks self-actions with a 403).
@@ -91,11 +93,24 @@ export default function SuperadminRoles() {
     }
   };
 
+  // Reveal a user's full NRIC (audited server-side, SR-03). Cached per user so a
+  // second glance doesn't re-hit the endpoint (and re-audit).
+  const revealNric = async (user) => {
+    if (nricById[user.user_id]) return;
+    try {
+      const res = await api.getSuperadminUserNric(user.user_id);
+      setNricById((m) => ({ ...m, [user.user_id]: res.nric }));
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const reactivate = async (user) => {
+    const wasLocked = user.account_status === 'locked';
     setBusyId(user.user_id);
     try {
       await api.reactivateAdmin(user.user_id);
-      toast.success(`${user.email} reactivated.`);
+      toast.success(`${user.email} ${wasLocked ? 'unlocked' : 'reactivated'}.`);
       await load(applied);
     } catch (err) {
       toast.error(err.message);
@@ -128,6 +143,7 @@ export default function SuperadminRoles() {
           <thead>
             <tr style={{ borderBottom: '2px solid #E5E7EB', color: '#4B5563' }}>
               <th style={{ padding: '12px 8px' }}>User</th>
+              <th style={{ padding: '12px 8px' }}>NRIC</th>
               <th style={{ padding: '12px 8px' }}>Role</th>
               <th style={{ padding: '12px 8px' }}>Status</th>
               <th style={{ padding: '12px 8px' }}>Actions</th>
@@ -135,9 +151,9 @@ export default function SuperadminRoles() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="4" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>Loading…</td></tr>
+              <tr><td colSpan="5" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>Loading…</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan="4" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>No users found.</td></tr>
+              <tr><td colSpan="5" style={{ padding: '32px', textAlign: 'center', color: '#6B7280' }}>No users found.</td></tr>
             ) : users.map((u) => {
               const isSelf = u.user_id === me.user_id;
               const isStaff = u.role === 'admin' || u.role === 'superadmin';
@@ -147,6 +163,21 @@ export default function SuperadminRoles() {
                   <td style={{ padding: '12px 8px' }}>
                     <div style={{ fontWeight: '600', color: '#111827' }}>{u.full_name}</div>
                     <div style={{ color: '#6B7280', fontSize: '0.9rem' }}>{u.email}</div>
+                  </td>
+                  <td style={{ padding: '12px 8px', fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                    {nricById[u.user_id] ? (
+                      <span style={{ fontWeight: '700', color: '#DC2626' }}>{nricById[u.user_id]}</span>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{u.nric_masked}</span>
+                        <button
+                          onClick={() => revealNric(u)}
+                          style={{ fontSize: '0.75rem', cursor: 'pointer', padding: '2px 6px', border: '1px solid #D1D5DB', borderRadius: '4px', background: '#FFF' }}
+                        >
+                          Reveal
+                        </button>
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '12px 8px' }}>
                     <select
@@ -168,15 +199,7 @@ export default function SuperadminRoles() {
                       <span style={{ color: '#9CA3AF', fontSize: '0.9rem' }}>You</span>
                     ) : !isStaff ? (
                       <span style={{ color: '#9CA3AF', fontSize: '0.9rem' }}>Managed by admins</span>
-                    ) : u.account_status === 'suspended' ? (
-                      <button
-                        onClick={() => reactivate(u)}
-                        disabled={busy}
-                        style={{ padding: '6px 14px', border: '1px solid #059669', color: '#059669', background: 'white', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
-                      >
-                        Reactivate
-                      </button>
-                    ) : (
+                    ) : u.account_status === 'active' ? (
                       <button
                         onClick={() => suspend(u)}
                         disabled={busy}
@@ -184,6 +207,18 @@ export default function SuperadminRoles() {
                       >
                         Suspend
                       </button>
+                    ) : (u.account_status === 'locked' || u.account_status === 'suspended') ? (
+                      // Same endpoint clears both: a brute-force lock (SR-09) and an
+                      // admin suspension. Label reflects which one is being lifted.
+                      <button
+                        onClick={() => reactivate(u)}
+                        disabled={busy}
+                        style={{ padding: '6px 14px', border: '1px solid #059669', color: '#059669', background: 'white', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                      >
+                        {u.account_status === 'locked' ? 'Unlock' : 'Reactivate'}
+                      </button>
+                    ) : (
+                      <span style={{ color: '#9CA3AF', fontSize: '0.9rem' }}>—</span>
                     )}
                   </td>
                 </tr>

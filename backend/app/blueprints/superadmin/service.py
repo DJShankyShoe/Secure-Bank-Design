@@ -22,10 +22,12 @@ from __future__ import annotations
 import uuid
 from typing import Any, Optional
 
+from flask import current_app
 from sqlalchemy import func, or_, select, update
 
 from ...extensions import db
 from ...models import SessionRecord, User
+from ...security import crypto
 from ...services.audit import emit_audit
 
 _VALID_ROLES = ("customer", "admin", "superadmin")
@@ -119,6 +121,29 @@ def list_directory(search: Optional[str] = None,
         } for u in rows]
     finally:
         session.close()
+
+
+def reveal_nric(*, actor_id: uuid.UUID, target_user_id: uuid.UUID,
+                source_ip: str) -> dict[str, Any]:
+    """Decrypt and return any user's FULL NRIC (superadmin, SR-03).
+
+    Unlike the admin reveal (customers only), a superadmin may reveal any user's
+    NRIC — staff included — since they manage the whole directory. The NRIC is
+    AES-256-GCM at rest and decrypted only here; every read is audited (SR-03/14).
+    """
+    key = current_app.extensions["securebank_config"].aes_encryption_key
+    session = db.app_session()
+    try:
+        user = session.get(User, target_user_id)
+        if user is None:
+            raise TargetNotFound()
+        full = crypto.aes_decrypt(user.nric_encrypted, key).decode("utf-8")
+        masked = user.nric_masked
+    finally:
+        session.close()
+    emit_audit("NRIC_REVEAL", "success", source_ip=source_ip, actor_user_id=actor_id,
+               actor_role="superadmin", target_user_id=target_user_id)
+    return {"user_id": str(target_user_id), "nric": full, "nric_masked": masked}
 
 
 def set_role(*, actor_id: uuid.UUID, target_user_id: uuid.UUID, new_role: str,

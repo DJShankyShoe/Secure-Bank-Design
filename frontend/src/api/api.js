@@ -214,21 +214,17 @@ export const api = {
       }),
     }),
 
-  requestUnlock: (email) =>
-    request("/auth/unlock/request", {
-      method: "POST",
-      body: JSON.stringify({
-        email,
-      }),
-    }),
+  // Notifications (customer bell). A locked account has no self-service unlock
+  // endpoint — it auto-unlocks after 30 min or an admin unlocks it; the user is
+  // told via these notifications + email.
+  getNotifications: (page = 1) =>
+    request(`/notifications?page=${page}`, { method: "GET" }),
 
-  verifyUnlock: (token) =>
-    request("/auth/unlock/verify", {
-      method: "POST",
-      body: JSON.stringify({
-        token,
-      }),
-    }),
+  markNotificationRead: (notificationId) =>
+    request(`/notifications/${notificationId}/read`, { method: "POST" }),
+
+  markAllNotificationsRead: () =>
+    request("/notifications/read-all", { method: "POST" }),
 
     resendVerificationEmail: (email) =>
     request("/auth/register/resend-email", {
@@ -474,4 +470,19 @@ export const api = {
     request(`/superadmin/users/${userId}/reactivate`, {
       method: "POST",
     }),
+
+  // Reveal a user's FULL NRIC (superadmin scope: any user; audited server-side).
+  getSuperadminUserNric: (userId) =>
+    request(`/superadmin/users/${userId}/nric`, {
+      method: "GET",
+    }),
+
+  // Full audit log (superadmin scope): every event, including staff-to-staff
+  // activity that the admin (customer-oversight) view withholds.
+  getSuperadminAuditLogs: (page = 1, type = "", user = "") => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (type) params.set("type", type);
+    if (user) params.set("user", user);
+    return request(`/superadmin/audit?${params.toString()}`, { method: "GET" });
+  },
 };

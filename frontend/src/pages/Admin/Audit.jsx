@@ -4,11 +4,21 @@ import { toast } from '../../ui/notify.jsx';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Label shown in the user autocomplete — lets the admin find a person by any of
-// name, email, or NRIC.
-const userLabel = (u) => `${u.full_name} — ${u.email} — ${u.nric_masked}`;
+// Label shown in the user autocomplete — lets the admin find a person by name or
+// email. NRIC is intentionally not a search key: only the masked form is client-
+// side available, so matching on it would be misleading (and the full NRIC is
+// encrypted at rest and only exposed via the audited reveal endpoint, SR-03).
+const userLabel = (u) =>
+  [u.full_name, u.email].filter(Boolean).join(' — ');
 
-export default function AdminAudit() {
+// Reused by both the admin (customer-oversight) audit view and the superadmin
+// (full-scope) view — the two differ only in which endpoints they read from, so
+// the fetchers and heading are injected as props.
+export default function AdminAudit({
+  fetchLogs = api.getAuditLogs,
+  fetchUsers = api.getUsers,
+  title = 'System Audit Logs',
+}) {
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +42,7 @@ export default function AdminAudit() {
     [userMap]
   );
 
-  // Resolve the typed term (email / NRIC / name / label / UUID) to a target user.
+  // Resolve the typed term (email / name / label / UUID) to a target user.
   const term = applied.user.trim();
   const isUuid = UUID_RE.test(term);
   const candidates = useMemo(() => {
@@ -41,11 +51,9 @@ export default function AdminAudit() {
     return users.filter(
       (u) =>
         (u.email || '').toLowerCase() === lc ||
-        (u.nric_masked || '').toLowerCase() === lc ||
         userLabel(u).toLowerCase() === lc ||
         (u.full_name || '').toLowerCase().includes(lc) ||
-        (u.email || '').toLowerCase().includes(lc) ||
-        (u.nric_masked || '').toLowerCase().includes(lc)
+        (u.email || '').toLowerCase().includes(lc)
     );
   }, [term, isUuid, users]);
 
@@ -56,7 +64,7 @@ export default function AdminAudit() {
   const load = useCallback(async (pageNum, type, serverUser) => {
     setLoading(true);
     try {
-      const res = await api.getAuditLogs(pageNum, type, serverUser);
+      const res = await fetchLogs(pageNum, type, serverUser);
       setItems(res.items || []);
       if (res.page_size) setPageSize(res.page_size);
     } catch (err) {
@@ -64,14 +72,14 @@ export default function AdminAudit() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchLogs]);
 
   // Load the user directory once for id -> name resolution + autocomplete.
   useEffect(() => {
-    api.getUsers()
+    fetchUsers()
       .then((res) => setUsers(res.users || []))
       .catch(() => setUsers([]));
-  }, []);
+  }, [fetchUsers]);
 
   useEffect(() => {
     load(page, applied.type.trim(), serverUserId);
@@ -96,7 +104,7 @@ export default function AdminAudit() {
 
   return (
     <div className="content-card">
-      <h2 style={{ marginBottom: '16px' }}>System Audit Logs</h2>
+      <h2 style={{ marginBottom: '16px' }}>{title}</h2>
 
       <form onSubmit={handleFilter} style={{ display: 'flex', gap: '16px', marginBottom: '24px', padding: '16px', backgroundColor: '#F9FAFB', borderRadius: '8px' }}>
         <input
@@ -109,7 +117,7 @@ export default function AdminAudit() {
         <input
           type="text"
           list="audit-users"
-          placeholder="User — by name, email, or NRIC"
+          placeholder="User — by name or email"
           value={filters.user}
           onChange={(e) => setFilters({ ...filters, user: e.target.value })}
           style={{ padding: '8px', flex: 1 }}
@@ -148,9 +156,9 @@ export default function AdminAudit() {
               <td style={{ padding: '12px 8px', color: '#6B7280' }}>{formatTs(log.event_timestamp)}</td>
               <td style={{ padding: '12px 8px', fontWeight: '600' }}>{log.event_type}</td>
               <td style={{ padding: '12px 8px' }}>
-                {nameFor(log.actor_user_id) || (log.actor_role ? `(${log.actor_role})` : 'System')}
+                {log.actor_name || nameFor(log.actor_user_id) || (log.actor_role ? `(${log.actor_role})` : 'System')}
               </td>
-              <td style={{ padding: '12px 8px' }}>{nameFor(log.target_user_id) || '—'}</td>
+              <td style={{ padding: '12px 8px' }}>{log.target_name || nameFor(log.target_user_id) || '—'}</td>
               <td style={{ padding: '12px 8px', color: log.outcome === 'success' ? '#059669' : '#DC2626' }}>{String(log.outcome || '').toUpperCase()}</td>
             </tr>
           ))}
