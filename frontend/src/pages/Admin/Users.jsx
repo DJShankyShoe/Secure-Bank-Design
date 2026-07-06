@@ -69,6 +69,10 @@ export default function AdminUsers() {
 
   const handleToggleUserStatus = async (userId, currentStatus) => {
     const suspend = currentStatus === 'active';
+    // A brute-force lock (SR-09) and an admin suspension are lifted by the same
+    // unlock endpoint; wording reflects which one is being cleared.
+    const wasLocked = currentStatus === 'locked';
+    const verb = wasLocked ? 'Unlock' : 'Reactivate';
     let reason = true;
     if (suspend) {
       reason = await promptReason({
@@ -79,7 +83,7 @@ export default function AdminUsers() {
         confirmText: 'Suspend',
       });
       if (reason === null) return;
-    } else if (!(await confirm({ title: 'Reactivate user', message: 'Reactivate this user?' }))) {
+    } else if (!(await confirm({ title: `${verb} user`, message: `${verb} this user?` }))) {
       return;
     }
 
@@ -92,7 +96,7 @@ export default function AdminUsers() {
           u.user_id === userId ? { ...u, account_status: res.status } : u
         )
       );
-      toast.success(suspend ? 'User suspended.' : 'User reactivated.');
+      toast.success(suspend ? 'User suspended.' : wasLocked ? 'User unlocked.' : 'User reactivated.');
     } catch (err) {
       toast.error(err.message);
     }
@@ -222,8 +226,8 @@ export default function AdminUsers() {
                     </td>
                     <td style={{ padding: '12px 8px' }}>{statusPill(user.account_status)}</td>
                     <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                      <button onClick={() => handleToggleUserStatus(uid, user.account_status)} style={{ color: user.account_status === 'active' ? '#DC2626' : '#059669', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}>
-                        {user.account_status === 'active' ? 'Suspend' : 'Unlock'}
+                      <button onClick={() => handleToggleUserStatus(uid, user.account_status)} style={{ padding: '6px 14px', border: `1px solid ${user.account_status === 'active' ? '#DC2626' : '#059669'}`, color: user.account_status === 'active' ? '#DC2626' : '#059669', background: 'white', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                        {user.account_status === 'active' ? 'Suspend' : user.account_status === 'locked' ? 'Unlock' : 'Reactivate'}
                       </button>
                     </td>
                   </tr>
