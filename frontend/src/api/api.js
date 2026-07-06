@@ -82,7 +82,10 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
     }
 
     // Session invalid/expired/missing → let the app clear auth + redirect to login.
-    if (response.status === 401 && onUnauthorized) {
+    // Some endpoints return 401 for a wrong re-entered credential (current password,
+    // step-up TOTP) on an otherwise-valid session — those opt out via skipAuthRedirect
+    // so a typo doesn't bounce the user to the login page.
+    if (response.status === 401 && onUnauthorized && !options.skipAuthRedirect) {
       onUnauthorized();
     }
 
@@ -197,9 +200,12 @@ export const api = {
       method: "GET",
     }),
 
+  // 401 here means "wrong current password", not an invalid session — skip the
+  // global auth-redirect so a typo doesn't bounce the user to /login.
   requestEmailChange: (new_email, password) =>
     request("/auth/email", {
       method: "POST",
+      skipAuthRedirect: true,
       body: JSON.stringify({
         new_email,
         password,
@@ -259,17 +265,23 @@ export const api = {
       method: "GET",
     }),
 
+  // 401 here means "wrong step-up TOTP code", not an invalid session — skip the
+  // global auth-redirect so a typo doesn't bounce the user to /login.
   closeAccount: (accountId, totp_code) =>
     request(`/accounts/${accountId}/close`, {
       method: "POST",
+      skipAuthRedirect: true,
       body: JSON.stringify({
         totp_code,
       }),
     }),
 
+    // 401 here means "wrong current password", not an invalid session — skip the
+    // global auth-redirect so a typo doesn't bounce the user to /login.
     changePassword: (current_password, new_password) =>
     request("/auth/password/change", {
       method: "POST",
+      skipAuthRedirect: true,
       body: JSON.stringify({
         current_password,
         new_password,
@@ -303,9 +315,12 @@ export const api = {
   // Per backend spec: password is only required when REPLACING an existing PIN.
   // First-time setup (SetupPin.jsx) omits password; a future "change PIN" flow
   // in Settings should pass the current password as the second argument.
+  // 401 on the replace path means "wrong current password", not an invalid
+  // session — skip the global auth-redirect so a typo doesn't bounce to /login.
   setTransactionPin: (pin, password = null) =>
     request("/transactions/pin", {
       method: "POST",
+      skipAuthRedirect: true,
       body: JSON.stringify(
         password ? { pin, password } : { pin }
       ),
