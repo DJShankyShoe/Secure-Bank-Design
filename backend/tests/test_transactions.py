@@ -71,7 +71,8 @@ def _balance(client, account_id: str) -> int:
 
 
 def _set_pin(client, pin=_PIN, password=_PW):
-    return client.post("/transactions/pin", json={"password": password, "pin": pin}, base_url=_HTTPS)
+    return client.post("/transactions/pin",
+                       json={"password": password, "pin": pin}, base_url=_HTTPS)
 
 
 def _transfer(client, src, dst, amount, *, key=None, pin=None, dst_external=None):
@@ -162,6 +163,73 @@ def test_high_value_wrong_pin_401(require_db, txn_app):
     assert _balance(c, src["account_id"]) == 2_000_000  # no money moved
 
 
+def _user_row(app, email):
+    from sqlalchemy import select
+
+    from app.extensions import db
+    from app.models import User
+
+    s = db.app_session()
+    try:
+        return s.execute(select(User).where(User.email == email)).scalar_one(), s
+    except Exception:
+        s.close()
+        raise
+
+
+def test_wrong_pin_does_not_lock_account(require_db, txn_app):
+    # Decoupled 2026-07-06: a wrong transaction PIN throttles high-value transfers
+    # (3/txn + 5/hr) but must NOT feed the SR-09 account lockout — so repeated wrong
+    # PINs can never lock the owner out of login (feature-only).
+    from app.config import Config
+
+    c, u = _setup_user(txn_app)
+    _set_pin(c)
+    src = _create_account(c)
+    dst = _create_account(c, "current")
+    _fund(txn_app, src["account_id"], 5_000_000)
+
+    # Fire ACCOUNT_LOCKOUT_THRESHOLD wrong-PIN high-value transfers (distinct keys so
+    # the 3/txn window never trips) — under the old coupling this would have locked
+    # the account; now every one is a plain 401.
+    for _ in range(Config.ACCOUNT_LOCKOUT_THRESHOLD):
+        r = _transfer(c, src["account_number"], dst["account_number"], 100_000, pin="000000")
+        assert r.status_code == 401
+
+    with txn_app.app_context():
+        user, s = _user_row(txn_app, u["email"])
+        try:
+            assert user.account_status == "active"      # never locked (feature-only)
+            assert (user.failed_login_count or 0) == 0
+        finally:
+            s.close()
+        # Login still works — the account was never locked.
+        assert isinstance(login_password(email=u["email"], password=_PW, source_ip=_IP), str)
+
+
+def test_pin_replace_wrong_password_cooldown_is_feature_only(require_db, txn_app):
+    # FR-10: repeated wrong current-password entries on the replace-PIN feature
+    # temporarily lock it (429) but never lock the account.
+    from app.config import Config
+
+    c, u = _setup_user(txn_app)
+    _set_pin(c)  # a PIN now exists, so replacing re-verifies the password
+
+    statuses = [
+        c.post("/transactions/pin", json={"password": "WrongPass123!", "pin": "246810"},
+               base_url=_HTTPS).status_code
+        for _ in range(Config.PASSWORD_REVERIFY_LIMIT + 1)
+    ]
+    assert 401 in statuses and 429 in statuses
+    with txn_app.app_context():
+        user, s = _user_row(txn_app, u["email"])
+        try:
+            assert user.account_status == "active"
+        finally:
+            s.close()
+        assert isinstance(login_password(email=u["email"], password=_PW, source_ip=_IP), str)
+
+
 def test_insufficient_funds_400_no_change(require_db, txn_app):
     c, _ = _setup_user(txn_app)
     src = _create_account(c)
@@ -192,8 +260,9 @@ def test_idempotency_conflict_409(require_db, txn_app):
     dst = _create_account(c, "current")
     _fund(txn_app, src["account_id"], 200_000)
     key = str(uuid.uuid4())
-    assert _transfer(c, src["account_number"], dst["account_number"], 50_000, key=key).status_code == 201
-    r = _transfer(c, src["account_number"], dst["account_number"], 60_000, key=key)  # different body
+    assert _transfer(c, src["account_number"], dst["account_number"], 50_000,
+                     key=key).status_code == 201
+    r = _transfer(c, src["account_number"], dst["account_number"], 60_000, key=key)  # diff body
     assert r.status_code == 409
 
 
@@ -239,7 +308,8 @@ def test_transfer_emits_audit(require_db, txn_app):
     src = _create_account(c)
     dst = _create_account(c, "current")
     _fund(txn_app, src["account_id"], 200_000)
-    ref = _transfer(c, src["account_number"], dst["account_number"], 50_000).get_json()["reference_number"]
+    ref = _transfer(c, src["account_number"], dst["account_number"],
+                    50_000).get_json()["reference_number"]
     with db.admin_reader_engine.connect() as conn:
         n = conn.execute(
             text("SELECT count(*) FROM audit.audit_events WHERE event_type='TRANSFER' "

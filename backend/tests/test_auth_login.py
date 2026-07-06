@@ -77,6 +77,43 @@ def test_login_unknown_user_same_generic_error(require_db, app):
     assert e1.value.status == e2.value.status == 401
 
 
+def test_locked_login_still_runs_password_verify(require_db, app, monkeypatch):
+    # Timing anti-enumeration (SR-09): a locked account must still pay the Argon2
+    # verify, else it answers faster than a wrong password on an active account and
+    # leaks account state by timing. Assert structurally (verify_password is called),
+    # which is robust — a wall-clock assertion would be flaky.
+    from datetime import datetime, timedelta, timezone
+
+    from app.blueprints.auth.login_service import crypto as login_crypto
+    from app.extensions import db
+    from app.models import User
+
+    u = _register_and_activate(app)
+    with app.app_context():
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == u["email"])).scalar_one()
+            user.account_status = "locked"
+            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=30)
+            s.commit()
+        finally:
+            s.close()
+
+    calls = {"n": 0}
+    real = login_crypto.verify_password
+
+    def spy(stored_hash, pw):
+        calls["n"] += 1
+        return real(stored_hash, pw)
+
+    monkeypatch.setattr(login_crypto, "verify_password", spy)
+
+    with app.app_context():
+        with pytest.raises(InvalidCredentials):
+            login_password(email=u["email"], password=u["password"], source_ip=_IP)
+    assert calls["n"] == 1  # Argon2 verify ran despite the lock (constant work)
+
+
 def test_login_pending_account_signals_verification_required(require_db, app):
     # Registered but not verified (pending) + correct password -> VerificationRequired
     # carrying the two flags, so the SPA can prompt the missing step(s).
@@ -305,10 +342,55 @@ def test_change_password_wrong_current_401(require_db, api_client, app):
     mfa = r1.get_json()["mfa_token"]
     api_client.post("/auth/login/mfa",
                     json={"mfa_token": mfa, "code": pyotp.TOTP(u["secret"]).now()}, headers=_HTTPS)
-    r = api_client.post("/auth/password/change",
-                        json={"current_password": "WrongPass123!", "new_password": "An0ther!Passw0rd"},
-                        headers=_HTTPS)
+    r = api_client.post(
+        "/auth/password/change",
+        json={"current_password": "WrongPass123!", "new_password": "An0ther!Passw0rd"},
+        headers=_HTTPS)
     assert r.status_code == 401
+
+
+def test_change_password_reverify_cooldown_is_feature_only(require_db, api_client, app):
+    # FR-10: repeated wrong current-password entries temporarily lock the change-
+    # password feature (429) — but must NOT lock the account (no self-DoS on login).
+    from app.config import Config
+
+    u = _register_and_activate(app)
+    r1 = api_client.post("/auth/login",
+                         json={"email": u["email"], "password": u["password"]}, headers=_HTTPS)
+    mfa = r1.get_json()["mfa_token"]
+    api_client.post("/auth/login/mfa",
+                    json={"mfa_token": mfa, "code": pyotp.TOTP(u["secret"]).now()}, headers=_HTTPS)
+
+    # Hammer with wrong current passwords: early tries are 401 (bad password); once
+    # the 5/30-min window fills, further tries are 429 (feature cooldown).
+    statuses = [
+        api_client.post(
+            "/auth/password/change",
+            json={"current_password": "WrongPass123!", "new_password": "An0ther!Passw0rd"},
+            headers=_HTTPS).status_code
+        for _ in range(Config.PASSWORD_REVERIFY_LIMIT + 1)
+    ]
+    assert 401 in statuses and 429 in statuses
+    # Even the CORRECT current password is refused while the feature is on cooldown.
+    assert api_client.post(
+        "/auth/password/change",
+        json={"current_password": u["password"], "new_password": "An0ther!Passw0rd"},
+        headers=_HTTPS).status_code == 429
+
+    # ...yet the ACCOUNT itself is never locked: login still works (feature-only).
+    from app.extensions import db
+    from app.models import User
+
+    with app.app_context():
+        assert isinstance(
+            login_password(email=u["email"], password=u["password"], source_ip=_IP), str)
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == u["email"])).scalar_one()
+            assert user.account_status == "active"
+            assert (user.failed_login_count or 0) == 0
+        finally:
+            s.close()
 
 
 def test_me_returns_profile(require_db, api_client, app):

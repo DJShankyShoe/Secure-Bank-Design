@@ -112,6 +112,22 @@ def test_register_duplicate_nric_rejected(require_db, app):
             register_customer(**{**kwargs, "email": _email()})
 
 
+def test_register_duplicate_still_hashes_password(require_db, app, monkeypatch):
+    # Timing anti-enumeration (SR-09): a duplicate email/NRIC must still pay the
+    # Argon2 password hash, else it returns detectably faster than a fresh signup
+    # and leaks account existence via timing. Structural (hash_password is called),
+    # not wall-clock (which would be flaky).
+    kwargs, _ = _register(app)
+    calls = {"n": 0}
+    real = crypto.hash_password
+    monkeypatch.setattr(crypto, "hash_password",
+                        lambda p: (calls.__setitem__("n", calls["n"] + 1), real(p))[1])
+    with app.app_context():
+        with pytest.raises(DuplicateRegistration):
+            register_customer(**kwargs)
+    assert calls["n"] == 1  # password hashed on the duplicate path (constant work)
+
+
 def test_duplicate_email_and_nric_share_generic_message(require_db, app):
     # The client-facing outcome must not reveal WHICH field collided
     # (anti-enumeration, SR-09): both raise the same status + message.

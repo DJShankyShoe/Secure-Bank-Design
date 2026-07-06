@@ -49,6 +49,13 @@ class EmailRateLimited(EmailChangeError):
     message = "Too many requests. Please try again later."
 
 
+class PasswordReverifyLocked(EmailChangeError):
+    # FR-10: password-gated features go on a temporary cooldown after too many wrong
+    # current-password entries. Feature-only — the account itself is never locked.
+    status = 429
+    message = "Too many incorrect password attempts. Please try again later."
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -75,8 +82,19 @@ def request_email_change(*, user_id: uuid.UUID, new_email: str, password: str,
         user = session.get(User, user_id)
         if user is None:
             raise InvalidToken()
+        # In-session password-guessing friction (FR-10): too many wrong current-
+        # password entries temporarily lock password-gated features only (never the
+        # account). Checked before the verify so a filled window short-circuits.
+        if lockout.is_password_reverify_rate_limited(session, user_id):
+            session.commit()  # persist any just-recorded attempt
+            emit_audit("EMAIL_CHANGE_REQUEST", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "reverify_rate_limited"})
+            raise PasswordReverifyLocked()
         # Re-authenticate the current password before anything else (FR-04).
         if not crypto.verify_password(user.password_hash, password or ""):
+            lockout.record_auth_attempt(session, user_id, "password")
+            session.commit()
             emit_audit("EMAIL_CHANGE_REQUEST", "denied", source_ip=source_ip,
                        actor_user_id=user_id, target_user_id=user_id,
                        action_detail={"reason": "bad_password"})

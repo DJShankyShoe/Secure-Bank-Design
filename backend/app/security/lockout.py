@@ -4,9 +4,13 @@ Two distinct mechanisms, both DB-backed so they survive load balancing (NFR-04):
 
 * **Account lockout (SR-09)** — ``users.failed_login_count`` is a *consecutive*
   counter; at ``ACCOUNT_LOCKOUT_THRESHOLD`` the account is ``locked`` with a
-  ``locked_until`` 30-min window (also unlockable by email link / admin).
-* **Rate-limit windows (SR-11/12)** — rows in ``session.auth_attempts`` are
-  COUNTed within a sliding window: TOTP 5/min, PIN 3 per transaction + 5/hour.
+  ``locked_until`` 30-min window (auto-unlocks when it passes; an admin can also
+  unlock). On locking, the owner is alerted by email + in-app notification (FR-10).
+* **Rate-limit windows (SR-11/12, FR-10)** — rows in ``session.auth_attempts`` are
+  COUNTed within a sliding window: TOTP 5/min, PIN 3 per transaction + 5/hour, and
+  in-session password re-verify 5 per 30 min. These are *feature-only* throttles —
+  they never lock the whole account (that is the SR-09 mechanism above), so a
+  shoulder-surfer at an unlocked session can't DoS the real owner out of login.
 
 All functions take an app_user-bound :class:`Session`; the caller owns the
 transaction (commit/rollback), except the read-only counters.
@@ -14,6 +18,7 @@ transaction (commit/rollback), except the read-only counters.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -23,6 +28,8 @@ from sqlalchemy.orm import Session
 
 from ..config import Config
 from ..models import AuthAttempt, User
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -113,6 +120,24 @@ def is_email_action_rate_limited(session: Session, user_id: uuid.UUID) -> bool:
     return count >= Config.EMAIL_ACTION_LIMIT_PER_HOUR
 
 
+def is_password_reverify_rate_limited(session: Session, user_id: uuid.UUID) -> bool:
+    """True if in-session password re-verify failures breach the window (FR-10).
+
+    Repeated wrong current-password entries on password-gated features (change
+    password / change email / change PIN) temporarily lock **only those features**,
+    never the whole account — so someone at an unlocked/unattended session can't
+    lock the real owner out of login (self-DoS), while online password guessing is
+    still throttled (5 fails / 30 min). The caller records each failure via
+    ``record_auth_attempt(..., "password")``.
+    """
+    _serialize_window(session, user_id, "password")
+    window = _now() - Config.PASSWORD_REVERIFY_WINDOW
+    return (
+        _count_attempts(session, user_id, "password", since=window)
+        >= Config.PASSWORD_REVERIFY_LIMIT
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Account lockout (SR-09)
 # --------------------------------------------------------------------------- #
@@ -137,12 +162,41 @@ def clear_expired_lock(user: User) -> None:
 def register_failed_auth(user: User) -> None:
     """Count one failed auth toward the lockout; lock at the threshold (SR-09).
 
-    Counts password/TOTP/PIN failures alike. Caller commits.
+    Counts genuine authentication-gate failures — login password, login/step-up
+    TOTP, and enrolment TOTP. Transaction-PIN failures are deliberately excluded
+    (feature-only throttle, decided 2026-07-06) so a wrong PIN can't lock login.
+    Caller commits. On the locking transition, alerts the owner (email + in-app
+    notification, FR-10).
     """
     user.failed_login_count = (user.failed_login_count or 0) + 1
-    if user.failed_login_count >= Config.ACCOUNT_LOCKOUT_THRESHOLD:
+    if (user.failed_login_count >= Config.ACCOUNT_LOCKOUT_THRESHOLD
+            and user.account_status != "locked"):
         user.account_status = "locked"
         user.locked_until = _now() + Config.LOCKOUT_UNLOCK_TTL
+        _emit_lockout_alert(user)
+
+
+def _emit_lockout_alert(user: User) -> None:
+    """Tell the owner their account just locked — email + in-app alert (SR-09/FR-10).
+
+    Best-effort and never raises: a delivery/logging failure must not break the
+    auth flow. The email is dispatched async (see ``send_email``); the in-app
+    notification is written on its own session.
+    """
+    from ..services.email import render_email, send_email
+    from ..services.notifications import notify
+
+    minutes = int(Config.LOCKOUT_UNLOCK_TTL.total_seconds() // 60)
+    try:
+        body = render_email("account_locked.txt", full_name=user.full_name, minutes=minutes)
+        send_email(to=user.email,
+                   subject="SecureBank security alert: your account has been locked",
+                   body=body)
+    except Exception:  # pragma: no cover - alert is non-critical
+        logger.exception("Failed to send lockout email for user %s", user.user_id)
+    notify(user.user_id, "account_locked", "Account locked",
+           f"Your account was locked after multiple failed sign-in attempts. It will "
+           f"unlock automatically in {minutes} minutes. If this wasn't you, contact support.")
 
 
 def reset_failed_auth(user: User) -> None:

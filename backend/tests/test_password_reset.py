@@ -3,8 +3,8 @@
 Covers: link sent only to a registered address (anti-enumeration), the new
 password takes effect while the old one stops working, the TOTP/backup-code
 step-up (second factor), single-use token, new-password policy re-validation,
-per-account rate-limiting, that a reset unlocks a brute-force-locked account, and
-that a reset revokes existing sessions (SR-13).
+per-account rate-limiting, that a reset does NOT unlock a brute-force-locked
+account, and that a reset revokes existing sessions (SR-13).
 """
 
 from __future__ import annotations
@@ -226,15 +226,29 @@ def test_request_is_rate_limited(require_db, reset_app):
     assert len(_to(reset_app, u["email"])) == Config.EMAIL_ACTION_LIMIT_PER_HOUR
 
 
-def test_locked_account_can_reset_and_unlocks(require_db, reset_app):
+def test_locked_account_reset_does_not_unlock(require_db, reset_app):
+    # A reset changes the password but must NOT clear a brute-force lockout (SR-09):
+    # the account stays locked and only auto-expires (30 min) or an admin unlocks it.
+    from sqlalchemy import select
+
+    from app.extensions import db
+    from app.models import User
+
     u = _register_active(reset_app)
     _lock(reset_app, u["email"])
     c = reset_app.test_client()
     token = _request_token(reset_app, c, u)
     assert _verify(c, token, _NEW_PW, _totp(u)).status_code == 200
-    # Account is active again and the new password logs in.
     with reset_app.app_context():
-        assert isinstance(login_password(email=u["email"], password=_NEW_PW, source_ip=_IP), str)
+        # Still locked: even the NEW (correct) password is refused while locked.
+        with pytest.raises(InvalidCredentials):
+            login_password(email=u["email"], password=_NEW_PW, source_ip=_IP)
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == u["email"])).scalar_one()
+            assert user.account_status == "locked"
+        finally:
+            s.close()
 
 
 def test_reset_revokes_existing_sessions(require_db, reset_app):

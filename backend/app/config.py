@@ -9,8 +9,11 @@ Argon2 params, …) is the ``Config`` object built here.
 
 Decision references (resolved 2026-06-23, see Decision Log):
 * PIN threshold is ``>=`` SGD 1,000 → ``PIN_THRESHOLD_CENTS = 100_000``.
-* PIN attempt limits: 3/transaction + 5/hour, and failures also count toward the
-  SR-09 account lockout.
+* PIN attempt limits: 3/transaction + 5/hour. As of 2026-07-06 wrong PINs are
+  **feature-only** — they throttle high-value transfers but no longer feed the
+  SR-09 account lockout (avoids a self-DoS on the login path).
+* In-session password re-verify failures (change password / email / PIN) are also
+  feature-only: 5 fails / 30-min cooldown, never an account lockout (FR-10).
 * Argon2 PIN params are distinct from the password params.
 """
 
@@ -127,6 +130,12 @@ class Config:
     PIN_ATTEMPTS_PER_TXN: ClassVar[int] = 3       # PIN tries per transaction (SR-12)
     PIN_ATTEMPTS_PER_HOUR: ClassVar[int] = 5      # PIN tries/hour/account (SR-12)
     EMAIL_ACTION_LIMIT_PER_HOUR: ClassVar[int] = 10  # email-change/reset/unlock req/hr/account
+
+    # In-session password re-verify cooldown (FR-10): too many wrong current-password
+    # checks on password-gated features (change password / change email / change PIN)
+    # temporarily lock ONLY those features — never the whole account (avoids self-DoS).
+    PASSWORD_REVERIFY_LIMIT: ClassVar[int] = 5      # fails allowed in the window
+    PASSWORD_REVERIFY_WINDOW: ClassVar[timedelta] = timedelta(minutes=30)
 
     # Argon2id parameters — password and PIN MUST differ (SR-01/SR-12).
     ARGON2_PASSWORD_TIME_COST: ClassVar[int] = 3

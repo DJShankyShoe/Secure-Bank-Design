@@ -77,17 +77,19 @@ class IdempotencyRecord(Base):
 
 
 class AuthAttempt(Base):
-    """One TOTP/PIN attempt for sliding-window rate limits (SR-11/12).
+    """One rate-limited attempt for sliding-window throttles (SR-11/12, FR-10).
 
     Distinct from ``users.failed_login_count`` (the SR-09 consecutive lockout):
     rows here are COUNTed within a window — TOTP 5/min, PIN 3/txn (keyed by
-    ``transaction_ref``) and 5/hour — then pruned.
+    ``transaction_ref``) and 5/hour, ``email`` sends 10/hour, and in-session
+    ``password`` re-verify 5/30-min — then pruned. All are feature-only.
     """
 
     __tablename__ = "auth_attempts"
     __table_args__ = (
         CheckConstraint(
-            "attempt_type IN ('totp','pin','email')", name="auth_attempts_type_check"
+            "attempt_type IN ('totp','pin','email','password')",
+            name="auth_attempts_attempt_type_check",
         ),
         {"schema": "session"},
     )

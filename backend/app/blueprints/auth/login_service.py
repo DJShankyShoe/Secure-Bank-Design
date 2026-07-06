@@ -44,7 +44,6 @@ from ...services.email import action_link, notify_user, render_email, send_email
 from .service import AuthServiceError, RateLimited
 
 _MFA_TOKEN_SALT = "mfa-pending-v1"
-_UNLOCK_TOKEN_SALT = "account-unlock-v1"
 _RESET_TOKEN_SALT = "password-reset-v1"
 _SIGNUP_EMAIL_SALT = "signup-email-verify-v1"
 _SIX_DIGITS = re.compile(r"^\d{6}$")
@@ -77,11 +76,6 @@ class VerificationRequired(AuthServiceError):
         self.totp_confirmed = totp_confirmed
 
 
-class UnlockLinkInvalid(AuthServiceError):
-    status = 400
-    message = "Invalid or expired unlock link."
-
-
 class PasswordResetInvalid(AuthServiceError):
     status = 400
     message = "Invalid or expired reset link."
@@ -95,6 +89,14 @@ class PasswordResetStepUpFailed(AuthServiceError):
 class CurrentPasswordWrong(AuthServiceError):
     status = 401
     message = "Current password is incorrect."
+
+
+class PasswordReverifyLocked(AuthServiceError):
+    # In-session password-guessing friction (FR-10): password-gated features go on a
+    # temporary cooldown after too many wrong current-password entries. Feature-only —
+    # the account itself is never locked (no self-DoS on the login path).
+    status = 429
+    message = "Too many incorrect password attempts. Please try again later."
 
 
 class SignupEmailInvalid(AuthServiceError):
@@ -167,6 +169,14 @@ def login_password(*, email: str, password: str, source_ip: str) -> str:
             raise InvalidCredentials()
 
         lockout.clear_expired_lock(user)
+        # Pay the Argon2 verification cost UNCONDITIONALLY — even for a locked
+        # account — so a locked (or any non-active) account is indistinguishable by
+        # response time from a wrong password on an active account. Skipping the
+        # hash on the locked branch would make locked accounts answer measurably
+        # faster, leaking account existence/state via timing (anti-enumeration,
+        # SR-09). Same reason we dummy-verify on the unknown-user branch above.
+        password_ok = crypto.verify_password(user.password_hash, password or "")
+
         if lockout.is_account_locked(user):
             session.commit()
             emit_audit("LOGIN", "denied", source_ip=source_ip,
@@ -174,7 +184,7 @@ def login_password(*, email: str, password: str, source_ip: str) -> str:
                        action_detail={"step": "password", "reason": "locked"})
             raise InvalidCredentials()
 
-        if not crypto.verify_password(user.password_hash, password or ""):
+        if not password_ok:
             lockout.register_failed_auth(user)
             session.commit()
             emit_audit("LOGIN", "failure", source_ip=source_ip,
@@ -327,87 +337,10 @@ def logout(*, session_id: str, source_ip: str) -> None:
         session.close()
 
 
-# --------------------------------------------------------------------------- #
-# Self-service account unlock (SR-09)
-# --------------------------------------------------------------------------- #
-
-def _unlock_serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt=_UNLOCK_TOKEN_SALT)
-
-
-def _read_unlock_token(token: str) -> Optional[uuid.UUID]:
-    try:
-        sealed = _unlock_serializer().loads(
-            token, max_age=int(Config.LOCKOUT_UNLOCK_TTL.total_seconds())
-        )
-        return _open_uid(sealed)
-    except (BadSignature, SignatureExpired, InvalidTag, ValueError, TypeError, AttributeError):
-        return None
-
-
-def request_account_unlock(*, email: str, source_ip: str) -> None:
-    """Email a 30-min unlock link to a locked account's registered address (SR-09).
-
-    Generic by design: an email is only sent when the account exists and is
-    actually locked; otherwise nothing happens and the caller still returns the
-    same generic response (anti-enumeration).
-    """
-    try:
-        email = validate_email(email)
-    except ValidationError:
-        return
-
-    session = db.app_session()
-    target = None
-    token = None
-    try:
-        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
-        if user is not None:
-            lockout.clear_expired_lock(user)
-            session.commit()
-            # Per-account anti-spam: cap unlock emails/hour; over the cap, send nothing.
-            if lockout.is_account_locked(user) and not lockout.is_email_action_rate_limited(
-                session, user.user_id
-            ):
-                lockout.record_auth_attempt(session, user.user_id, "email")
-                session.commit()
-                token = _unlock_serializer().dumps(_seal_uid(user.user_id))
-                target = user.email
-    finally:
-        session.close()
-
-    if target and token:
-        send_email(
-            to=target,
-            subject="Unlock your SecureBank account",
-            body=render_email("unlock_account.txt",
-                              unlock_url=action_link("/unlock", token)),
-        )
-        emit_audit("ACCOUNT_UNLOCK_REQUEST", "success", source_ip=source_ip,
-                   action_detail={"email": email})
-
-
-def verify_account_unlock(*, token: str, source_ip: str) -> None:
-    """Consume a signed unlock token and reactivate the account (SR-09)."""
-    user_id = _read_unlock_token(token or "")
-    if user_id is None:
-        raise UnlockLinkInvalid()
-
-    session = db.app_session()
-    try:
-        user = session.get(User, user_id)
-        if user is None:
-            raise UnlockLinkInvalid()
-        if user.account_status == "locked":
-            user.account_status = "active"
-            lockout.reset_failed_auth(user)
-            session.commit()
-            emit_audit("ACCOUNT_UNLOCK", "success", source_ip=source_ip,
-                       actor_user_id=user_id, target_user_id=user_id)
-        else:
-            session.rollback()  # already active/other state: no-op, generic success
-    finally:
-        session.close()
+# A locked account has NO self-service unlock endpoint (removed 2026-07-06): it
+# auto-unlocks after LOCKOUT_UNLOCK_TTL (30 min) via clear_expired_lock on the next
+# attempt, an admin/superadmin can unlock it, or a password reset clears it. The
+# owner is told it locked by an email + in-app notification (see lockout.py, FR-10).
 
 
 # --------------------------------------------------------------------------- #
@@ -563,6 +496,10 @@ def verify_password_reset(
         ):
             verified = True
         if not verified:
+            # NOTE: intentionally does NOT call register_failed_auth here. The step-up
+            # is rate-limited (5/min TOTP window above), but counting it toward the
+            # SR-09 account lockout would let a reset-link holder lock out the real
+            # user (DoS). Rate-limiting is the right friction here; the lockout is not.
             session.commit()  # persist the recorded attempt
             emit_audit("PASSWORD_RESET", "failure", source_ip=source_ip,
                        actor_user_id=user_id, target_user_id=user_id,
@@ -570,9 +507,10 @@ def verify_password_reset(
             raise PasswordResetStepUpFailed()
 
         user.password_hash = crypto.hash_password(new_password)
-        if user.account_status == "locked":
-            user.account_status = "active"
-        lockout.reset_failed_auth(user)
+        # A password reset does NOT clear a brute-force lockout (decided 2026-07-06):
+        # a locked account stays locked (its failed-count and locked_until are left
+        # intact) and simply auto-expires after its 30-min window, or an admin unlocks
+        # it. Reset changes the password but must never be a lockout bypass (SR-09).
         revoke_user_sessions(session, user.user_id)
         session.commit()
         emit_audit("PASSWORD_RESET", "success", source_ip=source_ip,
@@ -599,9 +537,20 @@ def change_password(*, user_id: uuid.UUID, current_password: str, new_password: 
     session = db.app_session()
     try:
         user = session.get(User, user_id)
-        if user is None or not crypto.verify_password(
-            user.password_hash, current_password or ""
-        ):
+        if user is None:
+            raise CurrentPasswordWrong()
+        # In-session password-guessing friction (FR-10): too many wrong current-
+        # password entries temporarily lock password-gated features only (never the
+        # account). Checked before the verify so a filled window short-circuits.
+        if lockout.is_password_reverify_rate_limited(session, user_id):
+            session.commit()  # persist any just-recorded attempt
+            emit_audit("PASSWORD_CHANGE", "denied", source_ip=source_ip,
+                       actor_user_id=user_id, target_user_id=user_id,
+                       action_detail={"reason": "reverify_rate_limited"})
+            raise PasswordReverifyLocked()
+        if not crypto.verify_password(user.password_hash, current_password or ""):
+            lockout.record_auth_attempt(session, user_id, "password")
+            session.commit()
             emit_audit("PASSWORD_CHANGE", "failure", source_ip=source_ip,
                        actor_user_id=user_id, target_user_id=user_id,
                        action_detail={"reason": "bad_current_password"})
@@ -744,10 +693,13 @@ def reissue_totp_provisioning(*, email: str, password: str, source_ip: str) -> s
             raise InvalidCredentials()
 
         lockout.clear_expired_lock(user)
+        # Constant-time branch: always run the Argon2 verify so a locked account
+        # can't be distinguished from a wrong password by response time (SR-09).
+        password_ok = crypto.verify_password(user.password_hash, password or "")
         if lockout.is_account_locked(user):
             session.commit()
             raise InvalidCredentials()
-        if not crypto.verify_password(user.password_hash, password or ""):
+        if not password_ok:
             lockout.register_failed_auth(user)
             session.commit()
             emit_audit("TOTP_REPROVISION", "failure", source_ip=source_ip,

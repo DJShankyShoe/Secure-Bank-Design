@@ -179,3 +179,30 @@ def test_email_change_is_rate_limited(require_db, em_app):
         statuses.append(r.status_code)
     assert statuses[:-1] == [200] * Config.EMAIL_ACTION_LIMIT_PER_HOUR
     assert statuses[-1] == 429   # over the per-account hourly cap
+
+
+def test_email_change_password_reverify_cooldown_is_feature_only(require_db, em_app):
+    # FR-10: repeated wrong current-password entries on the email-change feature
+    # temporarily lock it (429) but never lock the account (feature-only).
+    from sqlalchemy import select
+
+    from app.config import Config
+    from app.extensions import db
+    from app.models import User
+
+    c, email = _login(em_app)
+    statuses = [
+        c.post("/auth/email", json={"new_email": _email(), "password": "WrongPassw0rd!"},
+               base_url=_HTTPS).status_code
+        for _ in range(Config.PASSWORD_REVERIFY_LIMIT + 1)
+    ]
+    assert 401 in statuses and 429 in statuses
+    # The account is never locked: login still works and status stays active.
+    with em_app.app_context():
+        assert isinstance(login_password(email=email, password=_PW, source_ip=_IP), str)
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == email)).scalar_one()
+            assert user.account_status == "active"
+        finally:
+            s.close()

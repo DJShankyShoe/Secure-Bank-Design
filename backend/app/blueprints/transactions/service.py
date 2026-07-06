@@ -6,8 +6,9 @@ re-checked inside the lock, source is debited and destination credited, and the
 transaction + idempotency records are inserted together — so a concurrent retry
 with the same Idempotency-Key cannot double-execute (the PK insert conflicts and
 the whole txn rolls back). Transfers >= SGD 1,000 require a valid transaction PIN
-(Argon2id, distinct params), with PIN attempts rate-limited and counted toward the
-account lockout. Every outcome is audited; the sender is emailed a receipt.
+(Argon2id, distinct params); PIN attempts are rate-limited (3/txn + 5/hr → "try
+again later") but are feature-only and do NOT feed the SR-09 account lockout
+(decided 2026-07-06). Every outcome is audited; the sender is emailed a receipt.
 """
 
 from __future__ import annotations
@@ -108,11 +109,22 @@ def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_i
             raise InvalidPin()
         replacing = user.transaction_pin_hash is not None
         # Re-authenticate only when replacing an existing PIN.
-        if replacing and not crypto.verify_password(user.password_hash, password or ""):
-            emit_audit("PIN_SET", "failure", source_ip=source_ip,
-                       actor_user_id=user_id, target_user_id=user_id,
-                       action_detail={"reason": "bad_password"})
-            raise InvalidPin()  # generic; do not reveal which factor
+        if replacing:
+            # In-session password-guessing friction (FR-10): too many wrong current-
+            # password entries temporarily lock this feature only (never the account).
+            if lockout.is_password_reverify_rate_limited(session, user_id):
+                session.commit()  # persist any just-recorded attempt
+                emit_audit("PIN_SET", "denied", source_ip=source_ip,
+                           actor_user_id=user_id, target_user_id=user_id,
+                           action_detail={"reason": "reverify_rate_limited"})
+                raise TxnRateLimited()
+            if not crypto.verify_password(user.password_hash, password or ""):
+                lockout.record_auth_attempt(session, user_id, "password")
+                session.commit()
+                emit_audit("PIN_SET", "failure", source_ip=source_ip,
+                           actor_user_id=user_id, target_user_id=user_id,
+                           action_detail={"reason": "bad_password"})
+                raise InvalidPin()  # generic; do not reveal which factor
         user.transaction_pin_hash = crypto.hash_pin(pin)
         session.commit()
     finally:
@@ -139,8 +151,9 @@ def is_transaction_pin_set(*, user_id: uuid.UUID) -> bool:
 def _verify_pin_for_transfer(*, user_id: uuid.UUID, pin: str, txn_ref: str, source_ip: str) -> None:
     """Verify the PIN for a high-value transfer with attempt limits (SR-12).
 
-    Runs in its own committed transaction so a failed attempt (and its lockout
-    increment) persists even though the money transaction never starts.
+    Runs in its own committed transaction so a failed attempt (its rate-limit row)
+    persists even though the money transaction never starts. PIN failures throttle
+    high-value transfers (3/txn + 5/hr) but do NOT lock the account (feature-only).
     """
     session = db.app_session()
     try:
@@ -164,7 +177,9 @@ def _verify_pin_for_transfer(*, user_id: uuid.UUID, pin: str, txn_ref: str, sour
             raise TxnRateLimited()
         lockout.record_auth_attempt(session, user_id, "pin", transaction_ref=txn_ref)
         if not crypto.verify_pin(user.transaction_pin_hash, pin or ""):
-            lockout.register_failed_auth(user)
+            # Feature-only throttle (decided 2026-07-06): a wrong PIN counts toward
+            # the 3/txn + 5/hr PIN windows above (→ "try again later") but NOT toward
+            # the SR-09 account lockout — so it can never lock the user out of login.
             session.commit()
             emit_audit("PIN_VERIFY", "failure", source_ip=source_ip, actor_user_id=user_id,
                        target_user_id=user_id)

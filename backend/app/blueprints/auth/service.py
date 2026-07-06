@@ -126,6 +126,16 @@ def register_customer(
         secrets.token_hex(_BACKUP_CODE_BYTES).upper() for _ in range(_BACKUP_CODE_COUNT)
     ]
 
+    # Do ALL the heavy Argon2/AES work up front — BEFORE the duplicate check below —
+    # so a duplicate email/NRIC costs the same wall-clock time as a fresh signup.
+    # Otherwise these ~11 Argon2 hashes (password + 10 backup codes) run only on the
+    # success path, making a duplicate answer detectably faster → an account-exists
+    # timing oracle that defeats the generic response (anti-enumeration, SR-09).
+    password_hash = crypto.hash_password(password)
+    nric_encrypted = crypto.aes_encrypt(nric, key)
+    totp_seed_encrypted = crypto.aes_encrypt(seed, key)
+    backup_code_hashes = [crypto.hash_backup_code(code) for code in plaintext_codes]
+
     session = db.app_session()
     try:
         # Reject a duplicate email OR NRIC — each identifies one person, so both are
@@ -151,11 +161,11 @@ def register_customer(
             email=email,
             email_verified=False,
             full_name=full_name,
-            nric_encrypted=crypto.aes_encrypt(nric, key),
+            nric_encrypted=nric_encrypted,
             nric_masked=mask_nric(nric),
             nric_hash=nric_hash,
-            password_hash=crypto.hash_password(password),
-            totp_seed_encrypted=crypto.aes_encrypt(seed, key),
+            password_hash=password_hash,
+            totp_seed_encrypted=totp_seed_encrypted,
             role=bootstrap_role,
             account_status="pending",  # not login-usable until TOTP confirmed
         )
@@ -163,10 +173,8 @@ def register_customer(
         session.flush()  # assign user_id
 
         session.add(ContactPreference(user_id=user.user_id))
-        for code in plaintext_codes:
-            session.add(
-                MfaBackupCode(user_id=user.user_id, code_hash=crypto.hash_backup_code(code))
-            )
+        for code_hash in backup_code_hashes:
+            session.add(MfaBackupCode(user_id=user.user_id, code_hash=code_hash))
         session.commit()
         user_id = user.user_id
     except AuthServiceError:

@@ -26,13 +26,15 @@ CREATE TABLE session.idempotency_records (
 );
 CREATE INDEX idx_idempotency_expires ON session.idempotency_records (expires_at);
 
--- auth_attempts (SR-11/SR-12) — per-account TOTP (5/min) and PIN (3/txn, 5/hr)
--- windows. One row per attempt; COUNT within the window; prune old rows. This is
--- distinct from users.failed_login_count (which is the SR-09 consecutive lockout).
+-- auth_attempts (SR-11/SR-12/FR-10) — per-account feature-only rate-limit windows:
+-- TOTP (5/min), PIN (3/txn, 5/hr), email sends (10/hr), and in-session password
+-- re-verify (5/30-min). One row per attempt; COUNT within the window; prune old
+-- rows. Distinct from users.failed_login_count (the SR-09 consecutive lockout).
 CREATE TABLE session.auth_attempts (
   attempt_id       uuid PRIMARY KEY,
   user_id          uuid NOT NULL REFERENCES application.users (user_id),
-  attempt_type     varchar(16) NOT NULL CHECK (attempt_type IN ('totp','pin','email')),
+  attempt_type     varchar(16) NOT NULL
+                     CHECK (attempt_type IN ('totp','pin','email','password')),
   occurred_at      timestamptz NOT NULL DEFAULT NOW(),
   transaction_ref  varchar(32)                                          -- set for PIN (per-transaction 3/txn limit)
 );
