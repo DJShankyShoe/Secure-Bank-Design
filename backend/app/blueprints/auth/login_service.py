@@ -76,6 +76,20 @@ class VerificationRequired(AuthServiceError):
         self.totp_confirmed = totp_confirmed
 
 
+class AccountSuspended(AuthServiceError):
+    """Correct password, but an admin has suspended the account (FR-08).
+
+    Raised only when the credentials are valid — same anti-enumeration reasoning
+    as :class:`VerificationRequired` (SR-09): a wrong password on a suspended
+    account still gets the generic :class:`InvalidCredentials`, so a guessing
+    attacker learns nothing. Only someone who already has the correct password
+    learns the account is suspended.
+    """
+
+    status = 403
+    message = "Your account has been suspended. Please contact support."
+
+
 class PasswordResetInvalid(AuthServiceError):
     status = 400
     message = "Invalid or expired reset link."
@@ -198,11 +212,16 @@ def login_password(*, email: str, password: str, source_ip: str) -> str:
                        actor_user_id=user.user_id, target_user_id=user.user_id,
                        action_detail={"step": "password", "reason": "not_active"})
             # Password is correct: for a not-yet-verified (pending) account, tell the
-            # user what's missing so the SPA can prompt email/TOTP verification.
-            # Other non-active states (suspended/closed) stay generic.
+            # user what's missing so the SPA can prompt email/TOTP verification;
+            # for a suspended account, tell them so they know to contact support.
+            # Both are only reachable with the right password (SR-09) so neither
+            # helps an attacker enumerate accounts. Other non-active states
+            # (locked/closed) stay generic.
             if user.account_status == "pending":
                 raise VerificationRequired(email_verified=user.email_verified,
                                            totp_confirmed=user.totp_confirmed)
+            if user.account_status == "suspended":
+                raise AccountSuspended()
             raise InvalidCredentials()
 
         session.commit()

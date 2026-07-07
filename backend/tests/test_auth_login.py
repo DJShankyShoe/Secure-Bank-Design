@@ -138,6 +138,47 @@ def test_login_pending_wrong_password_still_generic(require_db, app):
             login_password(email=email, password="WrongPass123!", source_ip=_IP)
 
 
+def test_login_suspended_account_signals_suspended(require_db, app):
+    # Correct password on an admin-suspended account -> AccountSuspended, so the
+    # user knows to contact support instead of assuming a wrong password (FR-08).
+    from app.blueprints.auth.login_service import AccountSuspended
+    from app.extensions import db
+    from app.models import User
+
+    u = _register_and_activate(app)
+    with app.app_context():
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == u["email"])).scalar_one()
+            user.account_status = "suspended"
+            s.commit()
+        finally:
+            s.close()
+
+        with pytest.raises(AccountSuspended):
+            login_password(email=u["email"], password=u["password"], source_ip=_IP)
+
+
+def test_login_suspended_wrong_password_still_generic(require_db, app):
+    # Anti-enumeration (SR-09): a wrong password on a suspended account still gets
+    # the generic error — only the RIGHT password reveals the suspension.
+    from app.extensions import db
+    from app.models import User
+
+    u = _register_and_activate(app)
+    with app.app_context():
+        s = db.app_session()
+        try:
+            user = s.execute(select(User).where(User.email == u["email"])).scalar_one()
+            user.account_status = "suspended"
+            s.commit()
+        finally:
+            s.close()
+
+        with pytest.raises(InvalidCredentials):
+            login_password(email=u["email"], password="WrongPass123!", source_ip=_IP)
+
+
 # --------------------------------------------------------------------------- #
 # Stage 2: MFA
 # --------------------------------------------------------------------------- #

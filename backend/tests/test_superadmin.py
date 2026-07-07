@@ -181,9 +181,12 @@ def test_superadmin_suspends_admin_blocks_login(require_db, sa_app, super_client
     r = super_client.post(f"/superadmin/users/{target['user_id']}/suspend",
                           json={"reason": "policy"}, base_url=_HTTPS)
     assert r.status_code == 200
-    from app.blueprints.auth.login_service import InvalidCredentials
+    from app.blueprints.auth.login_service import AccountSuspended
     with sa_app.app_context():
-        with pytest.raises(InvalidCredentials):
+        # Correct password on a suspended (admin) account -> AccountSuspended, not
+        # the generic InvalidCredentials — only reachable with the right password
+        # so it doesn't help account enumeration (SR-09).
+        with pytest.raises(AccountSuspended):
             login_password(email=target["email"], password=_PW, source_ip=_IP)
     assert _audit_count(sa_app, event_type="SUPERADMIN_SUSPEND_ADMIN",
                         target_user_id=target["user_id"]) == 1
