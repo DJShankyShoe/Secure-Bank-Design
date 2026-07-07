@@ -152,6 +152,19 @@ export const api = {
       }),
     }),
 
+  // Re-issues the SAME (unrotated) TOTP provisioning URI for a 'pending'
+  // account that hasn't confirmed TOTP yet — used when a user never scanned
+  // the QR code the first time and comes back later to finish setup. Not
+  // logged in yet at this stage, so the password re-verifies identity.
+  reissueTotpSetup: (email, password) =>
+    request("/auth/register/totp-setup", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password,
+      }),
+    }),
+
 
   verifySignupEmail: (token) =>
   request("/auth/register/verify-email", {
