@@ -343,15 +343,19 @@ jobs:
           path: zap-out
 
   # ---------------------------------------------------------------------------
-  # CD — deploy to the EC2 host, but ONLY after CI passes.
+  # CD — deploy to the production EC2 host, but ONLY after CI passes.
   #   * needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
   #       -> deploys ONLY if the build/tests AND every security gate went green
   #          (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST).
-  #   * if:    only on a push/manual-run of the integration-test branch
-  #            (so pushes to production/Frontend/backend and all PRs never deploy).
+  #   * if:    only on a push/manual-run of the production branch
+  #            (so pushes to integration-test/Frontend/backend and all PRs
+  #            never deploy here — integration-test has its own deploy-test
+  #            job below, targeting a separate test EC2 host).
   #   * The script uses only repo `secrets.*` (never untrusted event input), so
   #     there is no script-injection surface (OWASP CI/CD).
-  # Required repo secrets: EC2_HOST, EC2_USERNAME, EC2_SSH_KEY.
+  # Required repo secrets: EC2_HOST, EC2_USERNAME, EC2_SSH_KEY (production);
+  # TEST_HOST, TEST_USERNAME, TEST_SSH_KEY (integration-test test host, see
+  # deploy-test below).
   # Server prereqs (one-time, not done here): repo cloned at ~/Secure-Bank-Design,
   # backend/.env + DB provisioned, ssh user in the `docker` group, CF tunnel up.
   # NOTE (optional hardening): to require manual approval before a production
@@ -359,18 +363,18 @@ jobs:
   # reviewers under Settings -> Environments (see SETTINGS_CHECKLIST.md).
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy to EC2
+    name: Deploy to Production EC2
     runs-on: ubuntu-latest
     needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
     permissions:
       contents: read
     if: >-
-      github.ref == 'refs/heads/integration-test' &&
+      github.ref == 'refs/heads/production' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
     # Serialise deploys; let an in-flight one finish rather than cancel it.
     concurrency:
-      group: cd-integration
+      group: cd-production
       cancel-in-progress: false
 
     steps:
