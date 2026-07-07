@@ -34,12 +34,12 @@ so each control can be reviewed in one place.
 
 | Tier | Technology |
 |---|---|
-| **Frontend** | React 18 + React Router, built with **Vite**; plain CSS |
+| **Frontend** | React 19 + React Router v7, built with **Vite**; plain CSS |
 | **Backend** | **Python 3.12**, Flask, SQLAlchemy ORM |
 | **Database** | **PostgreSQL 16** — three schemas, three least-privilege roles |
 | **Security libs** | argon2-cffi (Argon2id), cryptography (AES-256-GCM), pyotp (TOTP), Flask-WTF (CSRF), Flask-Talisman (headers) |
 | **Edge** | nginx reverse proxy + Cloudflare (TLS, per-IP rate limiting, WAF) |
-| **CI/CD** | GitHub Actions: pytest · flake8 · Bandit · Semgrep · OWASP Dependency-Check · Gitleaks · OWASP ZAP |
+| **CI/CD** | GitHub Actions (9 workflow files): pytest · flake8 · Bandit · Semgrep · OWASP Dependency-Check · Gitleaks · OWASP ZAP · Dependabot; separate production + test deploy targets |
 
 **Feature set:** MFA login (password → TOTP), in-house server-side sessions, admin-approved account
 open/close flows, fund transfer with a **PIN step-up for ≥ SGD 1,000**, bill payment to allowlisted
@@ -157,7 +157,18 @@ SecureBank/
 │
 ├── nginx/nginx.conf                  # reverse proxy: per-IP rate limits, body caps, forwards real client IP (infra)
 ├── docker-compose.yml                # nginx service — serves frontend/dist + proxies to the backend
-├── .github/workflows/ci.yml          # CI/CD: build · tests · flake8 · Bandit · Semgrep · Dependency-Check · Gitleaks · ZAP · deploy
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml                    # orchestrator only — wires every job below via needs: + reusable-workflow uses:
+│   │   ├── frontend-build.yml        #   npm ci · vite build · npm audit
+│   │   ├── backend-tests.yml         #   flake8 · Bandit · pytest, against a throwaway PostgreSQL service
+│   │   ├── dependency-check.yml      #   OWASP Dependency-Check — SCA on the pinned requirements.txt
+│   │   ├── sast-semgrep.yml          #   Semgrep — OWASP Top Ten + Python + JavaScript rulesets (BLOCKING)
+│   │   ├── secret-scan-gitleaks.yml  #   Gitleaks — full git-history secret scan (BLOCKING)
+│   │   ├── dast-zap.yml              #   OWASP ZAP baseline — boots the app, scans it running (BLOCKING)
+│   │   ├── deploy-production.yml     #   SSH deploy to production EC2 — gated on the production branch
+│   │   └── deploy-test.yml           #   SSH deploy to a separate test EC2 host — gated on integration-test
+│   └── dependabot.yml                # weekly, grouped dependency-update PRs (pip/npm/github-actions), 7-day cooldown
 ├── .gitleaks.toml                    # secret-scan allowlist (non-secret token salts + CI-only dummy creds)
 └── README.md                         # this file
 ```
@@ -285,21 +296,46 @@ cookie and CSRF flow work.
 
 ## 8. CI/CD & security scanning
 
-`.github/workflows/ci.yml` runs a defence-in-depth pipeline on every push/PR (least-privilege
-`GITHUB_TOKEN`, SHA-pinned actions):
+`.github/workflows/ci.yml` is a slim **orchestrator** on every push/PR (least-privilege
+`GITHUB_TOKEN`, SHA-pinned actions, verified against `git ls-remote` — not just the tag name). Every
+actual job lives in its own reusable workflow file, called via `uses:`, so the Actions UI shows what's
+actually running instead of one opaque "CI" entry. `needs:` only works within a single file, which is
+exactly why `ci.yml` stays the orchestrator: it's what keeps the hard gate below intact across files.
 
-| Job | Tool | Purpose |
+| Job (file) | Tool | Purpose |
 |---|---|---|
-| **frontend** | Vite build + `npm audit` | build the SPA; JS dependency SCA |
-| **backend** | flake8 + Bandit + pytest | PEP 8 lint, Python SAST, full test suite against a throwaway PostgreSQL |
-| **dependency-check** | OWASP Dependency-Check | SCA on the pinned `requirements.txt` |
-| **sast** | Semgrep | OWASP Top Ten + Python + JavaScript rulesets |
-| **secret-scan** | Gitleaks | scans full git history for committed secrets |
-| **dast** | OWASP ZAP (baseline) | boots the app and scans it running |
-| **deploy** | SSH | gated deploy to the server |
+| `frontend` (`frontend-build.yml`) | Vite build + `npm audit` | build the SPA; JS dependency SCA |
+| `backend` (`backend-tests.yml`) | flake8 + Bandit + pytest | PEP 8 lint, Python SAST, full test suite against a throwaway PostgreSQL |
+| `dependency-check` (`dependency-check.yml`) | OWASP Dependency-Check | SCA on the pinned `requirements.txt` |
+| `sast` (`sast-semgrep.yml`) | Semgrep | OWASP Top Ten + Python + JavaScript rulesets — **BLOCKING** |
+| `secret-scan` (`secret-scan-gitleaks.yml`) | Gitleaks | scans full git history for committed secrets — **BLOCKING** |
+| `dast` (`dast-zap.yml`) | OWASP ZAP (baseline) | boots the app and scans it running — **BLOCKING** |
+| `deploy` (`deploy-production.yml`) | SSH | deploys to the **production** EC2 host — gated on the `production` branch |
+| `deploy-test` (`deploy-test.yml`) | SSH | deploys to a **separate test** EC2 host — gated on the `integration-test` branch |
 
-The `sast`, `secret-scan`, and `dast` jobs are currently **non-blocking** (they report but don't fail
-the build) while findings are triaged; flip off their `continue-on-error` to make them gate merges.
+**`frontend`, `backend`, `dependency-check`, `sast`, `secret-scan`, and `dast` are all hard-blocking**:
+both deploy jobs declare `needs: [frontend, backend, dependency-check, sast, secret-scan, dast]`, so a
+single Semgrep/Gitleaks/ZAP finding, a failed test, or an unresolved high-CVSS dependency stops the
+push from deploying anywhere — there is no `continue-on-error` escape hatch. Each deploy job is passed
+only the secrets it actually needs (an explicit `secrets:` map, never `secrets: inherit`), so a
+compromised production deploy step still has no path to the test host's credentials or vice versa.
+
+**Two independent deploy targets, one pipeline:**
+- **`production`** branch → the real production EC2 host — nginx + Cloudflare tunnel, TLS-terminated,
+  same architecture as §2.
+- **`integration-test`** branch → a separate test EC2 host with **no nginx/Cloudflare**: the frontend
+  is served by the same `basicSsl`-backed Vite dev server used for local development (self-signed
+  HTTPS; `VITE_ALLOW_PUBLIC=true` widens it from localhost-only to public), and the backend deploys
+  via the identical `run.sh` method as production. Promote a change from `integration-test` to
+  `production` via a **pull request** — the pipeline itself never pushes `integration-test`'s content
+  to `production` automatically.
+
+**Dependabot** (`.github/dependabot.yml`) opens weekly, grouped update PRs for the three ecosystems in
+this repo — `pip` (`backend/`), `npm` (`frontend/`), `github-actions` (`.github/workflows/`) — each
+with a 7-day cooldown so a newly published (and potentially malicious or unstable) version isn't
+proposed immediately. Every PR still needs a human to review and run the test suite before merging —
+nothing auto-merges.
+
 Two allowlist notes for reviewers: **`.gitleaks.toml`** documents that the only "secrets" in the repo
 are non-secret `itsdangerous` token salts and deliberately fake CI-only test credentials; and the
 Semgrep step **excludes `nginx/`** because it is infra config, not app code (its one finding was the
