@@ -93,7 +93,6 @@ export default function History() {
           <h2 className="section-title">Transaction History</h2>
           <div className="helper-text">Review, filter, and audit your complete transaction records.</div>
         </div>
-        <button className="secondary-button">Export as CSV</button>
       </div>
 
       {/* Filter Control Panel */}

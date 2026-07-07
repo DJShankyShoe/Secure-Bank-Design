@@ -207,6 +207,19 @@ def test_wrong_pin_does_not_lock_account(require_db, txn_app):
         assert isinstance(login_password(email=u["email"], password=_PW, source_ip=_IP), str)
 
 
+def test_pin_replace_wrong_password_reports_current_password_incorrect(require_db, txn_app):
+    # Wrong current password on PIN *replace* must say "Current password is
+    # incorrect" -- not "Invalid PIN" (that message is reserved for the new
+    # PIN itself failing validation, e.g. wrong format).
+    c, _ = _setup_user(txn_app)
+    _set_pin(c)  # a PIN now exists, so replacing re-verifies the password
+
+    r = c.post("/transactions/pin", json={"password": "WrongPass123!", "pin": "246810"},
+               base_url=_HTTPS)
+    assert r.status_code == 401
+    assert r.get_json()["error"] == "Current password is incorrect."
+
+
 def test_pin_replace_wrong_password_cooldown_is_feature_only(require_db, txn_app):
     # FR-10: repeated wrong current-password entries on the replace-PIN feature
     # temporarily lock it (429) but never lock the account.
