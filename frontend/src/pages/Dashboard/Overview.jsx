@@ -21,8 +21,15 @@ export default function Dashboard() {
         const loadedAccounts = accountsRes.accounts || [];
         setAccounts(loadedAccounts);
 
-        if (loadedAccounts.length > 0) {
-          const txnRes = await api.getTransactions(loadedAccounts[0].account_id);
+        // GET /accounts intentionally returns every account regardless of status
+        // (so closed-account history stays visible in Manage Account) — the first
+        // one isn't necessarily usable, so pull recent activity from the first
+        // ACTIVE account instead of just loadedAccounts[0].
+        const firstActive = loadedAccounts.find(
+          (a) => String(a.status || "").toLowerCase() === "active"
+        );
+        if (firstActive) {
+          const txnRes = await api.getTransactions(firstActive.account_id);
           setTransactions((txnRes.items || []).slice(0, 5));
         }
 
@@ -36,7 +43,15 @@ export default function Dashboard() {
     loadDashboard();
   }, []);
 
-  const availableBalanceCents = accounts.reduce(
+  // Only 'active' accounts are usable/available — a closed (or open_requested /
+  // suspended / close_requested) account shouldn't inflate the count or balance
+  // shown here. Allowlist rather than denylist so a new status can never
+  // silently slip through (matches Transfer.jsx / PayBill.jsx / History.jsx).
+  const activeAccounts = accounts.filter(
+    (account) => String(account.status || "").toLowerCase() === "active"
+  );
+
+  const availableBalanceCents = activeAccounts.reduce(
     (sum, account) => sum + (account.balance_cents || 0),
     0
   );
@@ -78,7 +93,7 @@ export default function Dashboard() {
         </div>
         <div className="metric-card">
           <div className="table-muted">Accounts</div>
-          <div className="metric-value">{loading ? "Loading..." : accounts.length}</div>
+          <div className="metric-value">{loading ? "Loading..." : activeAccounts.length}</div>
         </div>
       </section>
 
