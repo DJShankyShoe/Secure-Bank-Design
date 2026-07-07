@@ -338,6 +338,9 @@ export const api = {
       method: "GET",
     }),
 
+  // 401 here means "wrong transaction PIN" (transfers >= SGD 1,000), not an
+  // invalid session — skip the global auth-redirect so a PIN typo doesn't
+  // bounce the user to /login.
   transfer: (
     source_account_number,
     destination_account_number,
@@ -346,6 +349,7 @@ export const api = {
   ) =>
     request("/transactions/transfer", {
       method: "POST",
+      skipAuthRedirect: true,
       headers: {
         "Idempotency-Key": crypto.randomUUID(),
       },
