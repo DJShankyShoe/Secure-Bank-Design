@@ -1,0 +1,42 @@
+version: 2
+updates:
+  # Backend (Python) dependencies — pinned exact versions per CLAUDE.md SR-07.
+  # Grouped into one PR per week instead of one per package.
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    groups:
+      backend-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # Frontend (npm) dependencies.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    groups:
+      frontend-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # GitHub Actions used across all workflow files (the SHA-pinned actions/*,
+  # appleboy/ssh-action, dependency-check/*, etc).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "ci"
