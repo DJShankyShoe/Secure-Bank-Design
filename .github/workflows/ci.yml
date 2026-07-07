@@ -73,9 +73,12 @@ jobs:
   #     integration-test/Frontend/backend and all PRs never deploy here —
   #     integration-test has its own deploy-test job below, targeting a
   #     separate test EC2 host).
-  #   * secrets: inherit passes EC2_HOST/EC2_USERNAME/EC2_SSH_KEY through to
-  #     deploy-production.yml (the script itself never touches untrusted event
-  #     input, so there is no script-injection surface — OWASP CI/CD).
+  #   * secrets: passes only the three secrets deploy-production.yml actually
+  #     needs (least privilege — Semgrep's yaml.github-actions.security.
+  #     secrets-inherit rule flags `secrets: inherit` here since it would hand
+  #     the called workflow every repo secret, including TEST_*). The script
+  #     itself never touches untrusted event input, so there is no
+  #     script-injection surface either (OWASP CI/CD).
   # Required repo secrets: EC2_HOST, EC2_USERNAME, EC2_SSH_KEY (production);
   # TEST_HOST, TEST_USERNAME, TEST_SSH_KEY (integration-test test host, see
   # deploy-test below).
@@ -98,7 +101,10 @@ jobs:
       cancel-in-progress: false
 
     uses: ./.github/workflows/deploy-production.yml
-    secrets: inherit
+    secrets:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
 
   # ---------------------------------------------------------------------------
   # CD — deploy to the test EC2 host (Ubuntu, no nginx/Cloudflare), but ONLY
@@ -123,4 +129,7 @@ jobs:
       cancel-in-progress: false
 
     uses: ./.github/workflows/deploy-test.yml
-    secrets: inherit
+    secrets:
+      TEST_HOST: ${{ secrets.TEST_HOST }}
+      TEST_USERNAME: ${{ secrets.TEST_USERNAME }}
+      TEST_SSH_KEY: ${{ secrets.TEST_SSH_KEY }}
