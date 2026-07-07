@@ -51,12 +51,17 @@ def create_session(db_session: Session, user_id: uuid.UUID, source_ip: str) -> s
     return token
 
 
-def validate_session(db_session: Session, session_id: str) -> Optional[SessionRecord]:
+def validate_session(
+    db_session: Session, session_id: str, *, touch: bool = True
+) -> Optional[SessionRecord]:
     """Return the live session for ``session_id`` or ``None`` (SR-13).
 
     Rejects revoked sessions, those past the 8-h absolute expiry, and those idle
     longer than 15 min (which are also revoked). On success ``last_active_at`` is
-    refreshed (caller commits) to slide the idle window.
+    refreshed (caller commits) to slide the idle window — unless ``touch`` is
+    False, for passive/background requests that must not count as user activity
+    (e.g. the notification-bell poll), so a session left open but genuinely
+    untouched by the user still idles out as intended.
     """
     if not session_id:
         return None
@@ -69,7 +74,8 @@ def validate_session(db_session: Session, session_id: str) -> Optional[SessionRe
     if now - record.last_active_at > Config.SESSION_IDLE_TIMEOUT:
         record.revoked = True  # idle timeout -> kill it
         return None
-    record.last_active_at = now
+    if touch:
+        record.last_active_at = now
     return record
 
 

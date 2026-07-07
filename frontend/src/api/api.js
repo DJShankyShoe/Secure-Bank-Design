@@ -99,8 +99,11 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
     csrfToken = data.csrf_token;
   }
 
-  // Successful request → the server just refreshed the session's idle window.
-  if (onActivity) onActivity();
+  // Successful request → the server just refreshed the session's idle window
+  // (skip for passive/background calls that intentionally don't extend it,
+  // e.g. the notification-bell poll — see skipActivityPing — so the visible
+  // countdown doesn't lie about a reset the server didn't actually grant).
+  if (onActivity && !options.skipActivityPing) onActivity();
 
   return data;
 }
@@ -223,8 +226,10 @@ export const api = {
   // Notifications (customer bell). A locked account has no self-service unlock
   // endpoint — it auto-unlocks after 30 min or an admin unlocks it; the user is
   // told via these notifications + email.
+  // Backend doesn't extend the idle session for this poll either (SR-13) — kept
+  // in sync so the visible session timer never shows a reset that didn't happen.
   getNotifications: (page = 1) =>
-    request(`/notifications?page=${page}`, { method: "GET" }),
+    request(`/notifications?page=${page}`, { method: "GET", skipActivityPing: true }),
 
   markNotificationRead: (notificationId) =>
     request(`/notifications/${notificationId}/read`, { method: "POST" }),

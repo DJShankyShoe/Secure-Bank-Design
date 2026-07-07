@@ -30,12 +30,14 @@ def _unauthenticated():
     return jsonify(error="Authentication required."), 401
 
 
-def _authenticate() -> Optional[tuple]:
+def _authenticate(*, touch: bool = True) -> Optional[tuple]:
     """Validate the session cookie and populate ``g`` (idempotent per request).
 
     Returns ``None`` on success (``g.user_id`` / ``g.user_role`` / ``g.session_id``
     set), or a ``(response, 401)`` tuple to short-circuit the handler. A session
     whose user is missing or no longer ``active`` is revoked and rejected.
+    ``touch=False`` skips sliding the idle window (SR-13) — see
+    :func:`require_role`.
     """
     if getattr(g, "_auth_done", False):
         return None
@@ -43,7 +45,7 @@ def _authenticate() -> Optional[tuple]:
     session_id = request.cookies.get(Config.SESSION_COOKIE_NAME, "")
     session = db.app_session()
     try:
-        record = validate_session(session, session_id)
+        record = validate_session(session, session_id, touch=touch)
         if record is None:
             session.commit()  # persist a possible idle-revoke
             return _unauthenticated()
@@ -77,16 +79,23 @@ def require_authenticated(fn: Callable) -> Callable:
     return wrapper
 
 
-def require_role(*roles: str) -> Callable:
+def require_role(*roles: str, touch: bool = True) -> Callable:
     """Require an authenticated session whose role is in ``roles``; else 403 (FR-08).
 
     Role is checked server-side on every request. Denials are audited (SR-14).
+
+    ``touch=False`` skips sliding the 15-min idle window (SR-13) for this route —
+    use it only for passive/background requests that don't represent genuine user
+    activity (e.g. the notification-bell's periodic poll). Without this, a session
+    left open in a background tab would never idle-timeout, since the poll itself
+    would keep resetting the clock every time it fires — defeating SR-13's intent
+    of logging out a user who has actually stepped away.
     """
 
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            err = _authenticate()
+            err = _authenticate(touch=touch)
             if err is not None:
                 return err
             if g.user_role not in roles:
