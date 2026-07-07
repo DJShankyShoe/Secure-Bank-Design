@@ -423,3 +423,92 @@ jobs:
               done
               [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
             done
+
+  # ---------------------------------------------------------------------------
+  # CD — deploy to the test EC2 host (Ubuntu, no nginx/Cloudflare), but ONLY
+  # after CI passes. Same gating as deploy above; independent concurrency
+  # group so a test deploy never queues behind or blocks a production deploy.
+  #   * Backend: identical method to the production job (run.sh up 2) —
+  #     BIND_HOST defaults to 127.0.0.1 in the Dockerfile, and the frontend
+  #     dev server below runs on the same host, so the backend never needs to
+  #     be publicly reachable directly (only the Vite dev server's port does).
+  #   * Frontend: no nginx/build step. Runs `npm run dev` inside a detached,
+  #     --network host container (mirrors run.sh's own container lifecycle:
+  #     force-remove the previous one, start fresh with latest code every
+  #     deploy). The existing `basicSsl` Vite plugin already serves
+  #     self-signed HTTPS with zero nginx (same as local dev at
+  #     https://localhost:5173) — VITE_ALLOW_PUBLIC=true just widens it from
+  #     localhost-only to 0.0.0.0 + allowedHosts (see vite.config.js).
+  # Required repo secrets: TEST_HOST, TEST_USERNAME, TEST_SSH_KEY.
+  # Server prereqs (one-time, not done here): repo cloned at
+  # ~/Secure-Bank-Design, backend/.env + DB provisioned, ssh user in the
+  # `docker` group, port 5173/tcp open in the security group.
+  # ---------------------------------------------------------------------------
+  deploy-test:
+    name: Deploy to Test EC2
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
+    permissions:
+      contents: read
+    if: >-
+      github.ref == 'refs/heads/integration-test' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+
+    concurrency:
+      group: cd-test
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
+        with:
+          host: ${{ secrets.TEST_HOST }}
+          username: ${{ secrets.TEST_USERNAME }}
+          key: ${{ secrets.TEST_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/Secure-Bank-Design
+
+            echo "== Sync code to the pushed commit =="
+            git fetch --all --prune
+            git checkout integration-test
+            git reset --hard origin/integration-test
+
+            echo "== Rebuild + restart backend (2 containers -> :8000, :8001), unchanged method =="
+            ./backend/scripts/run.sh up 2
+
+            echo "== (Re)start frontend dev server (Vite, public self-signed HTTPS) =="
+            docker rm -f securebank-frontend-dev >/dev/null 2>&1 || true
+            docker run -d \
+              --name securebank-frontend-dev \
+              --network host \
+              --restart unless-stopped \
+              -v "$(pwd)/frontend":/app \
+              -w /app \
+              -e VITE_ALLOW_PUBLIC=true \
+              node:20-alpine \
+              sh -c "rm -rf node_modules && npm install && npm run dev -- --host 0.0.0.0"
+
+            echo "== Health check: backend =="
+            for port in 8000 8001; do
+              ok=""
+              for i in $(seq 1 30); do
+                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
+                fi
+                sleep 1
+              done
+              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
+            done
+
+            echo "== Health check: frontend (Vite dev server, self-signed cert) =="
+            ok=""
+            for i in $(seq 1 120); do
+              if curl -fsSk -m 3 https://127.0.0.1:5173/ >/dev/null 2>&1; then
+                ok=1; echo " frontend on :5173 OK (after $((i-1))s)"; break
+              fi
+              sleep 1
+            done
+            [ -n "$ok" ] || { echo "frontend dev server did not become healthy in 120s"; docker logs --tail 100 securebank-frontend-dev; exit 1; }

@@ -13,12 +13,18 @@ const proxyConfig = {
   },
 }
 
+// Set only by the deploy-test job's CD script so the same config that serves
+// local dev (localhost-only, default Host-header allowlist) can also serve
+// the dev server publicly on the test EC2 host.
+const publicDev = process.env.VITE_ALLOW_PUBLIC === 'true'
+
 export default defineConfig({
   plugins: [react(), basicSsl()],
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
   server: {
+    ...(publicDev ? { host: '0.0.0.0', allowedHosts: true } : {}),
     proxy: {
       '/auth': proxyConfig,
       '/accounts': proxyConfig,
