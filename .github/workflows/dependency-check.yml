@@ -1,0 +1,37 @@
+name: Dependency Check
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      # SCA for Python deps. Pinned to a release SHA (was @main — a mutable
+      # branch, which the OWASP cheat sheet flags as a supply-chain risk).
+      - name: OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@75ba02d6183445fe0761d26e836bde58b1560600  # 1.1.0
+        with:
+          project: SecureBank-Backend
+          path: backend
+          format: HTML
+          args: >-
+            --failOnCVSS 7
+            --enableExperimental
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dependency-check-report
+          path: ${{ github.workspace }}/reports

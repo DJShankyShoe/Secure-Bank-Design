@@ -1,0 +1,69 @@
+name: Deploy to Production EC2
+
+on:
+  workflow_call:
+    secrets:
+      EC2_HOST:
+        required: true
+      EC2_USERNAME:
+        required: true
+      EC2_SSH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Production EC2
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true          # abort on the first failing command
+          script: |
+            set -euo pipefail
+            cd ~/Secure-Bank-Design
+
+            echo "== Sync code to the pushed commit =="
+            git fetch --all --prune
+            git checkout integration-test
+            git reset --hard origin/integration-test
+
+            echo "== Build frontend -> frontend/dist =="
+            # Clean install each deploy: node_modules is gitignored and persists on the
+            # host root-owned from prior container builds, which can leave stale/broken
+            # .bin perms (the 'vite: Permission denied' race). A fresh node_modules is
+            # cheap and avoids it.
+            docker run --rm -v "$(pwd)/frontend":/app -w /app node:20-alpine \
+              sh -c "rm -rf node_modules && npm install && npm run build"
+
+            echo "== Rebuild + restart backend (2 containers -> :8000, :8001) =="
+            ./backend/scripts/run.sh up 2
+
+            echo "== (Re)start nginx + reload its config =="
+            docker compose down
+            docker compose up -d
+            docker compose exec -T nginx nginx -s reload || docker compose restart nginx
+
+            echo "== Health check (wait for gunicorn to boot, then verify both) =="
+            # run.sh starts the containers detached; gunicorn needs a few seconds to
+            # bind, so poll each port up to 30s instead of curling immediately.
+            for port in 8000 8001; do
+              ok=""
+              for i in $(seq 1 30); do
+                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
+                fi
+                sleep 1
+              done
+              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
+            done
