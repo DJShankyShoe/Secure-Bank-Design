@@ -25,6 +25,7 @@ export default defineConfig({
       '/transactions': proxyConfig,
       '/admin': proxyConfig,
       '/superadmin': proxyConfig,
+      '/notifications': proxyConfig,
     },
   },
 })
