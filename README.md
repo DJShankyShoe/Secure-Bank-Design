@@ -526,6 +526,14 @@ query string and POSTs it here.
 Use the flags to prompt the missing step(s) — verify email (offer **`POST /auth/register/resend-email`**)
 and/or confirm TOTP — then retry login.
 
+**If the password is correct but an admin/superadmin has suspended the account**, you get instead:
+```jsonc
+// 403
+{ "error": "Your account has been suspended. Please contact support." }
+```
+Only reachable with the right password — a wrong-password guess on a suspended account still gets the
+generic `401` above, so this doesn't help account enumeration (SR-09).
+
 #### `POST /auth/register/resend-email`  — re-send the signup verification link
 ```jsonc
 { "email": "a@b.com" }                      // → 200 { "status": "verification_email_sent" }

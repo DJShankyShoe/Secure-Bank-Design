@@ -24,12 +24,15 @@ def _uuid(raw: str) -> uuid.UUID:
 
 
 @bp.get("")
-@require_role("customer")
+@require_role("customer", touch=False)
 def index():
     """List the current user's notifications (newest first) + unread count (FR-10).
 
     Query param: ``page`` (25/page default via the service). Ownership-scoped to
-    the session user.
+    the session user. ``touch=False``: the frontend bell polls this every 60s in
+    the background regardless of whether the user is actually present, so it must
+    not slide the SR-13 idle window — otherwise a session left open but genuinely
+    unattended would never idle-timeout.
     """
     try:
         page = int(request.args.get("page", "1"))

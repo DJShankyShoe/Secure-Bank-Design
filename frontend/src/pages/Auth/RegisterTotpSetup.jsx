@@ -18,6 +18,20 @@ export default function RegisterTotpSetup() {
   const [code, setCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
 
+  // Arriving via the login redirect never carries a provisioningUri (Login.jsx
+  // only passes {email}), even for a user who never actually scanned the QR
+  // the first time. Rather than assume they already have it, offer a way to
+  // re-fetch it (password re-verify, since there's no session yet) — the
+  // fetched URI is the SAME unrotated seed, see reissue_totp_provisioning.
+  const [reissuedUri, setReissuedUri] = useState(null);
+  const [reissuedBackupCodes, setReissuedBackupCodes] = useState(null);
+  const [showReissueForm, setShowReissueForm] = useState(false);
+  const [reissuePassword, setReissuePassword] = useState("");
+  const [isReissuing, setIsReissuing] = useState(false);
+
+  const effectiveProvisioningUri = provisioningUri || reissuedUri;
+  const effectiveBackupCodes = backupCodes || reissuedBackupCodes;
+
   const getSecretFromUri = (uri) => {
     try {
       const queryString = uri.split("?")[1] || "";
@@ -27,7 +41,24 @@ export default function RegisterTotpSetup() {
     }
   };
 
-  const secret = provisioningUri ? getSecretFromUri(provisioningUri) : "";
+  const secret = effectiveProvisioningUri ? getSecretFromUri(effectiveProvisioningUri) : "";
+
+  const handleReissue = async (e) => {
+    e.preventDefault();
+    try {
+      setIsReissuing(true);
+      const result = await api.reissueTotpSetup(resolvedEmail, reissuePassword);
+      setReissuedUri(result.provisioning_uri);
+      setReissuedBackupCodes(null);
+      setShowReissueForm(false);
+      setReissuePassword("");
+      toast.success("QR code ready — scan it below.");
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setIsReissuing(false);
+    }
+  };
 
   const handleVerify = async (e) => {
     e.preventDefault();
@@ -91,7 +122,7 @@ export default function RegisterTotpSetup() {
     );
   }
 
-  const hasQrData = Boolean(provisioningUri);
+  const hasQrData = Boolean(effectiveProvisioningUri);
 
   return (
     <div className="login-screen">
@@ -123,7 +154,7 @@ export default function RegisterTotpSetup() {
               <>
                 <div style={{ display: "flex", justifyContent: "center", margin: "24px 0" }}>
                   <div style={{ background: "white", padding: "16px", borderRadius: "12px" }}>
-                    <QRCodeSVG value={provisioningUri} size={200} />
+                    <QRCodeSVG value={effectiveProvisioningUri} size={200} />
                   </div>
                 </div>
 
@@ -134,7 +165,7 @@ export default function RegisterTotpSetup() {
                   </div>
                 )}
 
-                {backupCodes?.length > 0 && (
+                {effectiveBackupCodes?.length > 0 && (
                   <div className="field">
                     <label>Backup Codes</label>
                     <div className="inline-note">
@@ -149,7 +180,7 @@ export default function RegisterTotpSetup() {
                         marginTop: "10px",
                       }}
                     >
-                      {backupCodes.map((backupCode) => (
+                      {effectiveBackupCodes.map((backupCode) => (
                         <code key={backupCode}>{backupCode}</code>
                       ))}
                     </div>
@@ -170,8 +201,53 @@ export default function RegisterTotpSetup() {
                   fontSize: "0.9rem",
                 }}
               >
-                No new QR code needed — just enter the current code from the
-                authenticator app you already set up for <strong>{resolvedEmail}</strong>.
+                {!showReissueForm ? (
+                  <>
+                    <div>
+                      If you already scanned a QR code for <strong>{resolvedEmail}</strong>,
+                      just enter the current code from your authenticator app below.
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      style={{ marginTop: "10px" }}
+                      onClick={() => setShowReissueForm(true)}
+                    >
+                      Never scanned it? Get the QR code
+                    </button>
+                  </>
+                ) : (
+                  <form onSubmit={handleReissue}>
+                    <div>
+                      Re-enter your password to show the QR code for{" "}
+                      <strong>{resolvedEmail}</strong>.
+                    </div>
+                    <div className="field" style={{ marginTop: "10px" }}>
+                      <label>Password</label>
+                      <input
+                        type="password"
+                        required
+                        value={reissuePassword}
+                        onChange={(e) => setReissuePassword(e.target.value)}
+                      />
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button type="submit" className="primary-button" disabled={isReissuing}>
+                        {isReissuing ? "Loading..." : "Show QR Code"}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => {
+                          setShowReissueForm(false);
+                          setReissuePassword("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             )}
 

@@ -69,6 +69,18 @@ class InvalidPin(TxnError):
     message = "Invalid PIN."
 
 
+class CurrentPasswordWrong(TxnError):
+    # Distinct from InvalidPin: this is the current-password re-verify gate on
+    # PIN *replace* (set_transaction_pin), not the PIN itself. Matches the same
+    # "current password is incorrect" message used by the equivalent re-verify
+    # checks in login_service.change_password / email_service.request_email_change
+    # -- there is no enumeration concern here (the caller is already
+    # authenticated as this exact account), so unlike login there's no reason
+    # to blur which factor failed.
+    status = 401
+    message = "Current password is incorrect."
+
+
 class TxnRateLimited(TxnError):
     status = 429
     message = "Too many attempts. Please try again later."
@@ -99,7 +111,11 @@ def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_i
     is already authenticated and there is no money-moving credential to protect
     (decided 2026-07-05). **Replacing** an existing PIN still re-verifies the
     password, so a hijacked/unattended session cannot silently swap the PIN that
-    guards high-value transfers. Generic errors only (never reveal which factor).
+    guards high-value transfers. A wrong current password raises
+    CurrentPasswordWrong (distinct from InvalidPin, which is reserved for the
+    new PIN failing format validation) -- matching the equivalent re-verify
+    checks elsewhere (change_password, request_email_change). No enumeration
+    concern here since the caller is already authenticated as this account.
     """
     pin = validate_transaction_pin(pin)
     session = db.app_session()
@@ -124,7 +140,7 @@ def set_transaction_pin(*, user_id: uuid.UUID, password: str, pin: str, source_i
                 emit_audit("PIN_SET", "failure", source_ip=source_ip,
                            actor_user_id=user_id, target_user_id=user_id,
                            action_detail={"reason": "bad_password"})
-                raise InvalidPin()  # generic; do not reveal which factor
+                raise CurrentPasswordWrong()
         user.transaction_pin_hash = crypto.hash_pin(pin)
         session.commit()
     finally:

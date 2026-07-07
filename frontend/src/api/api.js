@@ -99,8 +99,11 @@ async function request(endpoint, options = {}, retryOnCsrf = true) {
     csrfToken = data.csrf_token;
   }
 
-  // Successful request → the server just refreshed the session's idle window.
-  if (onActivity) onActivity();
+  // Successful request → the server just refreshed the session's idle window
+  // (skip for passive/background calls that intentionally don't extend it,
+  // e.g. the notification-bell poll — see skipActivityPing — so the visible
+  // countdown doesn't lie about a reset the server didn't actually grant).
+  if (onActivity && !options.skipActivityPing) onActivity();
 
   return data;
 }
@@ -146,6 +149,19 @@ export const api = {
       body: JSON.stringify({
         email,
         code,
+      }),
+    }),
+
+  // Re-issues the SAME (unrotated) TOTP provisioning URI for a 'pending'
+  // account that hasn't confirmed TOTP yet — used when a user never scanned
+  // the QR code the first time and comes back later to finish setup. Not
+  // logged in yet at this stage, so the password re-verifies identity.
+  reissueTotpSetup: (email, password) =>
+    request("/auth/register/totp-setup", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password,
       }),
     }),
 
@@ -223,8 +239,10 @@ export const api = {
   // Notifications (customer bell). A locked account has no self-service unlock
   // endpoint — it auto-unlocks after 30 min or an admin unlocks it; the user is
   // told via these notifications + email.
+  // Backend doesn't extend the idle session for this poll either (SR-13) — kept
+  // in sync so the visible session timer never shows a reset that didn't happen.
   getNotifications: (page = 1) =>
-    request(`/notifications?page=${page}`, { method: "GET" }),
+    request(`/notifications?page=${page}`, { method: "GET", skipActivityPing: true }),
 
   markNotificationRead: (notificationId) =>
     request(`/notifications/${notificationId}/read`, { method: "POST" }),
@@ -338,6 +356,9 @@ export const api = {
       method: "GET",
     }),
 
+  // 401 here means "wrong transaction PIN" (transfers >= SGD 1,000), not an
+  // invalid session — skip the global auth-redirect so a PIN typo doesn't
+  // bounce the user to /login.
   transfer: (
     source_account_number,
     destination_account_number,
@@ -346,6 +367,7 @@ export const api = {
   ) =>
     request("/transactions/transfer", {
       method: "POST",
+      skipAuthRedirect: true,
       headers: {
         "Idempotency-Key": crypto.randomUUID(),
       },

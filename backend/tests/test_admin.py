@@ -9,7 +9,7 @@ import pyotp
 import pytest
 from sqlalchemy import select, text
 
-from app.blueprints.auth.login_service import InvalidCredentials, login_password
+from app.blueprints.auth.login_service import AccountSuspended, InvalidCredentials, login_password
 from app.blueprints.auth.service import confirm_totp_enrolment, register_customer
 from app.security.masking import mask_nric
 from conftest import activate_signup_email, approve_account, unique_nric
@@ -100,7 +100,10 @@ def test_admin_suspend_blocks_login_and_logs(require_db, admin_app, admin_client
                           json={"reason": "fraud review"}, base_url=_HTTPS)
     assert r.status_code == 200
     with admin_app.app_context():
-        with pytest.raises(InvalidCredentials):
+        # Correct password on a suspended account -> AccountSuspended (not the
+        # generic InvalidCredentials) so the owner knows to contact support;
+        # still only reachable with the right password (SR-09 anti-enumeration).
+        with pytest.raises(AccountSuspended):
             login_password(email=target["email"], password=_PW, source_ip=_IP)
     # Action audited with the admin as actor (FR-08 "admin access is logged").
     assert _audit_count(admin_app, event_type="ADMIN_SUSPEND_USER",

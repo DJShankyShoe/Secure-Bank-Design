@@ -118,6 +118,76 @@ def test_mark_all_read(require_db, notif_app):
 
 
 # --------------------------------------------------------------------------- #
+# SR-13: the bell's background poll must not extend the idle session
+# --------------------------------------------------------------------------- #
+
+def test_list_route_does_not_slide_idle_window(require_db, notif_app):
+    """GET /notifications is polled every 60s in the background regardless of
+    real user activity; it must not touch last_active_at (touch=False), or a
+    session left open but genuinely unattended would never idle-timeout."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import Config
+    from app.extensions import db
+    from app.models import SessionRecord
+
+    creds = _register(notif_app)
+    c = _client(notif_app, creds)
+    session_id = c.get_cookie(Config.SESSION_COOKIE_NAME).value
+
+    s = db.app_session()
+    try:
+        stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+        rec = s.get(SessionRecord, session_id)
+        rec.last_active_at = stale
+        s.commit()
+    finally:
+        s.close()
+
+    r = c.get("/notifications", base_url=_HTTPS)
+    assert r.status_code == 200
+
+    s = db.app_session()
+    try:
+        assert s.get(SessionRecord, session_id).last_active_at == stale
+    finally:
+        s.close()
+
+
+def test_other_authenticated_route_still_slides_idle_window(require_db, notif_app):
+    """Contrast case: a normal authenticated route (unlike the bell poll) still
+    extends the idle window as before — touch=False is the exception, not the
+    new default."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import Config
+    from app.extensions import db
+    from app.models import SessionRecord
+
+    creds = _register(notif_app)
+    c = _client(notif_app, creds)
+    session_id = c.get_cookie(Config.SESSION_COOKIE_NAME).value
+
+    s = db.app_session()
+    try:
+        stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+        rec = s.get(SessionRecord, session_id)
+        rec.last_active_at = stale
+        s.commit()
+    finally:
+        s.close()
+
+    r = c.get("/auth/me", base_url=_HTTPS)
+    assert r.status_code == 200
+
+    s = db.app_session()
+    try:
+        assert s.get(SessionRecord, session_id).last_active_at > stale
+    finally:
+        s.close()
+
+
+# --------------------------------------------------------------------------- #
 # Ownership + RBAC
 # --------------------------------------------------------------------------- #
 

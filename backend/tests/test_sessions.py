@@ -83,3 +83,43 @@ def test_validate_unknown_session_returns_none(require_db):
         assert validate_session(s, "does-not-exist") is None
     finally:
         s.close()
+
+
+def test_validate_session_touch_false_does_not_slide_idle_window(require_db):
+    """touch=False (the notification-bell poll) must not extend last_active_at —
+    otherwise a session left open but genuinely unattended never idles out (SR-13)."""
+    from app.extensions import db
+
+    s = db.app_session()
+    try:
+        u = _make_user(s)
+        sid = create_session(s, u.user_id, "203.0.113.1")
+        rec = s.get(SessionRecord, sid)
+        stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+        rec.last_active_at = stale
+        s.commit()
+
+        result = validate_session(s, sid, touch=False)
+        assert result is not None
+        assert s.get(SessionRecord, sid).last_active_at == stale  # unchanged
+    finally:
+        s.close()
+
+
+def test_validate_session_touch_false_still_enforces_idle_timeout(require_db):
+    """touch=False skips sliding the window, but an already-idle session must
+    still be rejected/revoked — it's not an exemption from the timeout itself."""
+    from app.extensions import db
+
+    s = db.app_session()
+    try:
+        u = _make_user(s)
+        sid = create_session(s, u.user_id, "203.0.113.1")
+        rec = s.get(SessionRecord, sid)
+        rec.last_active_at = datetime.now(timezone.utc) - timedelta(minutes=16)
+        s.commit()
+
+        assert validate_session(s, sid, touch=False) is None
+        assert s.get(SessionRecord, sid).revoked is True
+    finally:
+        s.close()
