@@ -407,6 +407,7 @@ jobs:
             ./backend/scripts/run.sh up 2
 
             echo "== (Re)start nginx + reload its config =="
+            docker compose down
             docker compose up -d
             docker compose exec -T nginx nginx -s reload || docker compose restart nginx
 
