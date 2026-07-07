@@ -9,6 +9,16 @@ name: CI
 #   * Untrusted event input is never interpolated into `run:` shell (injection).
 #   * SAST (Bandit + Semgrep), SCA (Dependency-Check + npm audit) and secret
 #     scanning (Gitleaks) run in the pipeline.
+#
+# This file is an ORCHESTRATOR ONLY: each job below delegates its real work to
+# a separate reusable workflow file via `uses:` (frontend-build.yml,
+# backend-tests.yml, dependency-check.yml, sast-semgrep.yml,
+# secret-scan-gitleaks.yml, dast-zap.yml, deploy-production.yml,
+# deploy-test.yml — all in this same directory). Splitting into files is
+# purely for Actions-sidebar clarity — `needs:` still only works within one
+# file, so this file is what keeps the hard gate intact: `deploy` and
+# `deploy-test` still cannot start until every job they `needs` has
+# succeeded, exactly as before the split.
 # ---------------------------------------------------------------------------
 
 on:
@@ -33,341 +43,51 @@ permissions:
 jobs:
   frontend:
     name: Frontend Build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    defaults:
-      run:
-        working-directory: frontend
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Security audit (npm)          # SCA for JS dependencies
-        run: npm audit --audit-level=high
-
-      - name: Upload frontend artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
-        with:
-          name: frontend-dist
-          path: frontend/dist
-          retention-days: 1
+    uses: ./.github/workflows/frontend-build.yml
 
   backend:
     name: Backend Tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    defaults:
-      run:
-        working-directory: backend
-
-    env:
-      FLASK_SECRET_KEY: ci-only-secret-key
-      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
-      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
-      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
-      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
-      SMTP_HOST: localhost
-      SMTP_PORT: "587"
-      SMTP_FROM: no-reply@securebank.example
-      TOTP_ISSUER: SecureBank
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Lint (flake8)
-        run: flake8 app
-
-      - name: SAST (Bandit)
-        run: bandit -r app -ll
-
-      - name: Apply schema, roles and grants
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
-          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
-            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
-          done
-          psql -h localhost -U postgres -d securebank_ci -c \
-            "ALTER ROLE app_user PASSWORD 'app_pw'; \
-             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
-             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
-
-      - name: Run tests
-        run: pytest -q
+    uses: ./.github/workflows/backend-tests.yml
 
   dependency-check:
     name: Dependency Check
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      # SCA for Python deps. Pinned to a release SHA (was @main — a mutable
-      # branch, which the OWASP cheat sheet flags as a supply-chain risk).
-      - name: OWASP Dependency Check
-        uses: dependency-check/Dependency-Check_Action@75ba02d6183445fe0761d26e836bde58b1560600  # 1.1.0
-        with:
-          project: SecureBank-Backend
-          path: backend
-          format: HTML
-          args: >-
-            --failOnCVSS 7
-            --enableExperimental
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
-        with:
-          name: dependency-check-report
-          path: ${{ github.workspace }}/reports
+    uses: ./.github/workflows/dependency-check.yml
 
   sast:
     name: SAST (Semgrep)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    # BLOCKING: Semgrep findings fail this job (via --error), and the deploy job
-    # `needs` it — so OWASP/Python/JS findings stop a push from deploying.
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install Semgrep
-        # setuptools ships pkg_resources, which Semgrep 1.97.0's bundled
-        # opentelemetry-instrumentation imports at startup. Python 3.12 no longer
-        # installs setuptools by default, so add it explicitly or Semgrep crashes
-        # with "ModuleNotFoundError: No module named 'pkg_resources'".
-        run: pip install "setuptools<81" semgrep==1.97.0
-
-      # Rulesets cover OWASP Top Ten plus language-specific checks for the Python
-      # backend and the JavaScript/React frontend. --error sets a non-zero exit on
-      # findings, which now fails the job and blocks the deploy (this job gates).
-      #
-      # --exclude nginx: this SAST targets the app code (Python/JS). The nginx
-      # reverse-proxy config is infra (out of backend scope) and only tripped the
-      # generic "request-host-used" rule on the standard `proxy_set_header Host
-      # $host;` idiom — not exploitable here (nginx listens on loopback behind a
-      # Cloudflare tunnel with no server_name, and the app builds all links from
-      # FRONTEND_BASE_URL, never the request Host header).
-      - name: Semgrep scan (OWASP Top Ten + Python + JavaScript)
-        run: >-
-          semgrep scan
-          --config p/owasp-top-ten
-          --config p/python
-          --config p/javascript
-          --exclude nginx
-          --error
-          --sarif --output semgrep.sarif
-
-      - name: Upload Semgrep SARIF
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
-        with:
-          name: semgrep-sarif
-          path: semgrep.sarif
+    uses: ./.github/workflows/sast-semgrep.yml
 
   secret-scan:
     name: Secret Scan (Gitleaks)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    # BLOCKING: a committed secret fails this job, and the deploy job `needs` it —
-    # so a detected secret stops a push from deploying. Known non-secrets (the
-    # itsdangerous token salts and the CI-only dummy creds) are allowlisted in
-    # .gitleaks.toml. Gitleaks CLI is MIT-licensed; pinned to an immutable image tag.
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          fetch-depth: 0        # full history so Gitleaks can scan every commit
-
-      - name: Gitleaks (detect committed secrets)
-        run: >-
-          docker run --rm -v "${{ github.workspace }}:/repo"
-          ghcr.io/gitleaks/gitleaks:v8.21.2
-          detect --source=/repo --redact -v
+    uses: ./.github/workflows/secret-scan-gitleaks.yml
 
   dast:
     name: DAST (OWASP ZAP baseline)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    # BLOCKING: boots the backend and runs a ZAP baseline scan against its public
-    # surface — headers, CSP, cookie flags, info leaks (OWASP A05 Security
-    # Misconfiguration). The deploy job `needs` it, so a real FAIL-level alert stops
-    # a push from deploying. ZAP runs with -I so noisy WARN-level findings do NOT
-    # fail the gate (only genuine FAILs do). This is an UNAUTHENTICATED baseline: it
-    # does not deep-scan the auth-gated endpoints.
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    defaults:
-      run:
-        working-directory: backend
-
-    env:
-      FLASK_SECRET_KEY: ci-only-secret-key
-      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
-      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
-      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
-      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
-      SMTP_HOST: localhost
-      SMTP_PORT: "587"
-      SMTP_FROM: no-reply@securebank.example
-      TOTP_ISSUER: SecureBank
-      FORCE_HTTPS: "false"            # serve plain HTTP so ZAP isn't redirected to https
-      CLEANUP_INTERVAL_SECONDS: "0"   # no background prune thread during the scan
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install runtime deps + gunicorn
-        run: |
-          pip install -r requirements.txt
-          pip install "gunicorn==23.0.0"
-
-      - name: Apply schema, roles and grants
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
-          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
-            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
-          done
-          psql -h localhost -U postgres -d securebank_ci -c \
-            "ALTER ROLE app_user PASSWORD 'app_pw'; \
-             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
-             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
-
-      - name: Boot the app (gunicorn, background)
-        run: |
-          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 2 \
-            --timeout 60 > "$GITHUB_WORKSPACE/gunicorn.log" 2>&1 &
-          echo "waiting for /healthz ..."
-          for i in $(seq 1 30); do
-            if curl -fsS -m 3 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
-              echo "app up after $((i-1))s"; break
-            fi
-            sleep 1
-          done
-          curl -fsS -m 3 http://127.0.0.1:8000/healthz \
-            || { echo "app did not boot:"; cat "$GITHUB_WORKSPACE/gunicorn.log"; exit 1; }
-
-      # ZAP runs with --network host so localhost:8000 reaches the app on the runner.
-      # Image tag 'stable' is mutable; pin to a digest for strict supply-chain control.
-      # -I: do not fail on WARN-level findings (baseline noise) — only genuine
-      # FAIL-level alerts return non-zero and gate the deploy.
-      - name: ZAP baseline scan
-        working-directory: ${{ github.workspace }}
-        run: |
-          mkdir -p zap-out && chmod 777 zap-out
-          docker run --rm --network host \
-            -v "${{ github.workspace }}/zap-out:/zap/wrk/:rw" \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t http://localhost:8000 \
-              -I -r zap-report.html -w zap-report.md -J zap-report.json
-
-      - name: Upload ZAP report
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
-        with:
-          name: zap-baseline-report
-          path: zap-out
+    uses: ./.github/workflows/dast-zap.yml
 
   # ---------------------------------------------------------------------------
   # CD — deploy to the production EC2 host, but ONLY after CI passes.
-  #   * needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
-  #       -> deploys ONLY if the build/tests AND every security gate went green
-  #          (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST).
-  #   * if:    only on a push/manual-run of the production branch
-  #            (so pushes to integration-test/Frontend/backend and all PRs
-  #            never deploy here — integration-test has its own deploy-test
-  #            job below, targeting a separate test EC2 host).
-  #   * The script uses only repo `secrets.*` (never untrusted event input), so
-  #     there is no script-injection surface (OWASP CI/CD).
+  #   * needs: [...] -> deploys ONLY if build/tests AND every security gate
+  #     went green (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST).
+  #   * if: only on a push/manual-run of the production branch (so pushes to
+  #     integration-test/Frontend/backend and all PRs never deploy here —
+  #     integration-test has its own deploy-test job below, targeting a
+  #     separate test EC2 host).
+  #   * secrets: inherit passes EC2_HOST/EC2_USERNAME/EC2_SSH_KEY through to
+  #     deploy-production.yml (the script itself never touches untrusted event
+  #     input, so there is no script-injection surface — OWASP CI/CD).
   # Required repo secrets: EC2_HOST, EC2_USERNAME, EC2_SSH_KEY (production);
   # TEST_HOST, TEST_USERNAME, TEST_SSH_KEY (integration-test test host, see
   # deploy-test below).
   # Server prereqs (one-time, not done here): repo cloned at ~/Secure-Bank-Design,
   # backend/.env + DB provisioned, ssh user in the `docker` group, CF tunnel up.
   # NOTE (optional hardening): to require manual approval before a production
-  # deploy, add `environment: production` to this job and configure required
+  # deploy, add `environment: production` here and configure required
   # reviewers under Settings -> Environments (see SETTINGS_CHECKLIST.md).
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to Production EC2
-    runs-on: ubuntu-latest
     needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
-    permissions:
-      contents: read
     if: >-
       github.ref == 'refs/heads/production' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -377,86 +97,23 @@ jobs:
       group: cd-production
       cancel-in-progress: false
 
-    steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 20m
-          script_stop: true          # abort on the first failing command
-          script: |
-            set -euo pipefail
-            cd ~/Secure-Bank-Design
-
-            echo "== Sync code to the pushed commit =="
-            git fetch --all --prune
-            git checkout integration-test
-            git reset --hard origin/integration-test
-
-            echo "== Build frontend -> frontend/dist =="
-            # Clean install each deploy: node_modules is gitignored and persists on the
-            # host root-owned from prior container builds, which can leave stale/broken
-            # .bin perms (the 'vite: Permission denied' race). A fresh node_modules is
-            # cheap and avoids it.
-            docker run --rm -v "$(pwd)/frontend":/app -w /app node:20-alpine \
-              sh -c "rm -rf node_modules && npm install && npm run build"
-
-            echo "== Rebuild + restart backend (2 containers -> :8000, :8001) =="
-            ./backend/scripts/run.sh up 2
-
-            echo "== (Re)start nginx + reload its config =="
-            docker compose down
-            docker compose up -d
-            docker compose exec -T nginx nginx -s reload || docker compose restart nginx
-
-            echo "== Health check (wait for gunicorn to boot, then verify both) =="
-            # run.sh starts the containers detached; gunicorn needs a few seconds to
-            # bind, so poll each port up to 30s instead of curling immediately.
-            for port in 8000 8001; do
-              ok=""
-              for i in $(seq 1 30); do
-                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
-                fi
-                sleep 1
-              done
-              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
-            done
+    uses: ./.github/workflows/deploy-production.yml
+    secrets: inherit
 
   # ---------------------------------------------------------------------------
   # CD — deploy to the test EC2 host (Ubuntu, no nginx/Cloudflare), but ONLY
   # after CI passes. Same gating as deploy above; independent concurrency
   # group so a test deploy never queues behind or blocks a production deploy.
-  #   * Backend: identical method to the production job (run.sh up 2) —
-  #     BIND_HOST defaults to 127.0.0.1 in the Dockerfile, and the frontend
-  #     dev server below runs on the same host, so the backend never needs to
-  #     be publicly reachable directly (only the Vite dev server's port does).
-  #   * Frontend: no nginx/build step. Runs `npm run dev` inside a detached,
-  #     --network host container (mirrors run.sh's own container lifecycle:
-  #     force-remove the previous one, start fresh with latest code every
-  #     deploy). The existing `basicSsl` Vite plugin already serves
-  #     self-signed HTTPS with zero nginx (same as local dev at
-  #     https://localhost:5173) — VITE_ALLOW_PUBLIC=true just widens it from
-  #     localhost-only to 0.0.0.0 + allowedHosts (see vite.config.js).
   #   * NOTE: this job is gated on integration-test and can never fire on a
   #     push to production (github.ref check below) — it is present here only
   #     so ci.yml stays IDENTICAL on both branches, which is what keeps future
   #     integration-test -> production merges conflict-free. Do not delete
   #     this job from the production branch; it is inert here by design, not
   #     dead code.
-  # Required repo secrets: TEST_HOST, TEST_USERNAME, TEST_SSH_KEY.
-  # Server prereqs (one-time, not done here): repo cloned at
-  # ~/Secure-Bank-Design, backend/.env + DB provisioned, ssh user in the
-  # `docker` group, port 5173/tcp open in the security group.
   # ---------------------------------------------------------------------------
   deploy-test:
     name: Deploy to Test EC2
-    runs-on: ubuntu-latest
     needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
-    permissions:
-      contents: read
     if: >-
       github.ref == 'refs/heads/integration-test' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -465,57 +122,5 @@ jobs:
       group: cd-test
       cancel-in-progress: false
 
-    steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
-        with:
-          host: ${{ secrets.TEST_HOST }}
-          username: ${{ secrets.TEST_USERNAME }}
-          key: ${{ secrets.TEST_SSH_KEY }}
-          command_timeout: 20m
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd ~/Secure-Bank-Design
-
-            echo "== Sync code to the pushed commit =="
-            git fetch --all --prune
-            git checkout integration-test
-            git reset --hard origin/integration-test
-
-            echo "== Rebuild + restart backend (2 containers -> :8000, :8001), unchanged method =="
-            ./backend/scripts/run.sh up 2
-
-            echo "== (Re)start frontend dev server (Vite, public self-signed HTTPS) =="
-            docker rm -f securebank-frontend-dev >/dev/null 2>&1 || true
-            docker run -d \
-              --name securebank-frontend-dev \
-              --network host \
-              --restart unless-stopped \
-              -v "$(pwd)/frontend":/app \
-              -w /app \
-              -e VITE_ALLOW_PUBLIC=true \
-              node:20-alpine \
-              sh -c "rm -rf node_modules && npm install && npm run dev -- --host 0.0.0.0"
-
-            echo "== Health check: backend =="
-            for port in 8000 8001; do
-              ok=""
-              for i in $(seq 1 30); do
-                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
-                fi
-                sleep 1
-              done
-              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
-            done
-
-            echo "== Health check: frontend (Vite dev server, self-signed cert) =="
-            ok=""
-            for i in $(seq 1 120); do
-              if curl -fsSk -m 3 https://127.0.0.1:5173/ >/dev/null 2>&1; then
-                ok=1; echo " frontend on :5173 OK (after $((i-1))s)"; break
-              fi
-              sleep 1
-            done
-            [ -n "$ok" ] || { echo "frontend dev server did not become healthy in 120s"; docker logs --tail 100 securebank-frontend-dev; exit 1; }
+    uses: ./.github/workflows/deploy-test.yml
+    secrets: inherit

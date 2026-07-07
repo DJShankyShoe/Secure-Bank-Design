@@ -1,0 +1,76 @@
+name: Backend Tests
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      FLASK_SECRET_KEY: ci-only-secret-key
+      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
+      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
+      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
+      SMTP_HOST: localhost
+      SMTP_PORT: "587"
+      SMTP_FROM: no-reply@securebank.example
+      TOTP_ISSUER: SecureBank
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (flake8)
+        run: flake8 app
+
+      - name: SAST (Bandit)
+        run: bandit -r app -ll
+
+      - name: Apply schema, roles and grants
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
+          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
+          done
+          psql -h localhost -U postgres -d securebank_ci -c \
+            "ALTER ROLE app_user PASSWORD 'app_pw'; \
+             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
+             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
+
+      - name: Run tests
+        run: pytest -q

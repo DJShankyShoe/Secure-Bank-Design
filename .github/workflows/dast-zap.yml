@@ -1,0 +1,112 @@
+name: DAST (OWASP ZAP baseline)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dast:
+    name: DAST (OWASP ZAP baseline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # BLOCKING: boots the backend and runs a ZAP baseline scan against its public
+    # surface — headers, CSP, cookie flags, info leaks (OWASP A05 Security
+    # Misconfiguration). The deploy job `needs` it, so a real FAIL-level alert stops
+    # a push from deploying. ZAP runs with -I so noisy WARN-level findings do NOT
+    # fail the gate (only genuine FAILs do). This is an UNAUTHENTICATED baseline: it
+    # does not deep-scan the auth-gated endpoints.
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      FLASK_SECRET_KEY: ci-only-secret-key
+      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_ci
+      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_ci
+      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_ci
+      SMTP_HOST: localhost
+      SMTP_PORT: "587"
+      SMTP_FROM: no-reply@securebank.example
+      TOTP_ISSUER: SecureBank
+      FORCE_HTTPS: "false"            # serve plain HTTP so ZAP isn't redirected to https
+      CLEANUP_INTERVAL_SECONDS: "0"   # no background prune thread during the scan
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime deps + gunicorn
+        run: |
+          pip install -r requirements.txt
+          pip install "gunicorn==23.0.0"
+
+      - name: Apply schema, roles and grants
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE securebank_ci;"
+          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_ci -f "sql/$f.sql"
+          done
+          psql -h localhost -U postgres -d securebank_ci -c \
+            "ALTER ROLE app_user PASSWORD 'app_pw'; \
+             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
+             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
+
+      - name: Boot the app (gunicorn, background)
+        run: |
+          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 2 \
+            --timeout 60 > "$GITHUB_WORKSPACE/gunicorn.log" 2>&1 &
+          echo "waiting for /healthz ..."
+          for i in $(seq 1 30); do
+            if curl -fsS -m 3 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "app up after $((i-1))s"; break
+            fi
+            sleep 1
+          done
+          curl -fsS -m 3 http://127.0.0.1:8000/healthz \
+            || { echo "app did not boot:"; cat "$GITHUB_WORKSPACE/gunicorn.log"; exit 1; }
+
+      # ZAP runs with --network host so localhost:8000 reaches the app on the runner.
+      # Image tag 'stable' is mutable; pin to a digest for strict supply-chain control.
+      # -I: do not fail on WARN-level findings (baseline noise) — only genuine
+      # FAIL-level alerts return non-zero and gate the deploy.
+      - name: ZAP baseline scan
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --rm --network host \
+            -v "${{ github.workspace }}/zap-out:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 \
+              -I -r zap-report.html -w zap-report.md -J zap-report.json
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: zap-baseline-report
+          path: zap-out

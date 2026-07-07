@@ -1,0 +1,76 @@
+name: Deploy to Test EC2
+
+on:
+  workflow_call:
+    secrets:
+      TEST_HOST:
+        required: true
+      TEST_USERNAME:
+        required: true
+      TEST_SSH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-test:
+    name: Deploy to Test EC2
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
+        with:
+          host: ${{ secrets.TEST_HOST }}
+          username: ${{ secrets.TEST_USERNAME }}
+          key: ${{ secrets.TEST_SSH_KEY }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/Secure-Bank-Design
+
+            echo "== Sync code to the pushed commit =="
+            git fetch --all --prune
+            git checkout integration-test
+            git reset --hard origin/integration-test
+
+            echo "== Rebuild + restart backend (2 containers -> :8000, :8001), unchanged method =="
+            ./backend/scripts/run.sh up 2
+
+            echo "== (Re)start frontend dev server (Vite, public self-signed HTTPS) =="
+            docker rm -f securebank-frontend-dev >/dev/null 2>&1 || true
+            docker run -d \
+              --name securebank-frontend-dev \
+              --network host \
+              --restart unless-stopped \
+              -v "$(pwd)/frontend":/app \
+              -w /app \
+              -e VITE_ALLOW_PUBLIC=true \
+              node:20-alpine \
+              sh -c "rm -rf node_modules && npm install && npm run dev -- --host 0.0.0.0"
+
+            echo "== Health check: backend =="
+            for port in 8000 8001; do
+              ok=""
+              for i in $(seq 1 30); do
+                if curl -fsS -m 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+                  ok=1; echo " backend on :$port OK (after $((i-1))s)"; break
+                fi
+                sleep 1
+              done
+              [ -n "$ok" ] || { echo "backend on :$port did not become healthy in 30s"; exit 1; }
+            done
+
+            echo "== Health check: frontend (Vite dev server, self-signed cert) =="
+            ok=""
+            for i in $(seq 1 120); do
+              if curl -fsSk -m 3 https://127.0.0.1:5173/ >/dev/null 2>&1; then
+                ok=1; echo " frontend on :5173 OK (after $((i-1))s)"; break
+              fi
+              sleep 1
+            done
+            [ -n "$ok" ] || { echo "frontend dev server did not become healthy in 120s"; docker logs --tail 100 securebank-frontend-dev; exit 1; }
