@@ -56,6 +56,14 @@ export default function Dashboard() {
     0
   );
 
+  // Per-account balances shown on the dashboard: active accounts plus suspended
+  // ones (the money is still theirs, just frozen) -- but NOT open_requested /
+  // close_requested / closed, which either aren't usable yet or are done.
+  const visibleAccounts = accounts.filter((account) => {
+    const status = String(account.status || "").toLowerCase();
+    return status === "active" || status === "suspended";
+  });
+
   const formatAmount = (amountCents, direction) => {
     const amount = Math.abs(amountCents) / 100;
     const sign = direction === "credit" ? "+" : "-";
@@ -94,6 +102,36 @@ export default function Dashboard() {
         <div className="metric-card">
           <div className="table-muted">Accounts</div>
           <div className="metric-value">{loading ? "Loading..." : activeAccounts.length}</div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="content-card">
+          <h3 className="card-title">Your accounts</h3>
+          {loading ? (
+            <div className="table-muted">Loading accounts...</div>
+          ) : visibleAccounts.length > 0 ? (
+            <ul className="stack-list">
+              {visibleAccounts.map((account) => (
+                <li key={account.account_id} className="account-row">
+                  <div>
+                    <strong style={{ textTransform: 'capitalize' }}>{account.account_type}</strong>
+                    <div className="table-muted" style={{ fontSize: '0.85rem' }}>{account.account_number}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {account.status === 'suspended' && (
+                      <span className="tag warning">Suspended</span>
+                    )}
+                    <span className="amount" style={{ fontSize: '1.1rem' }}>
+                      SGD {((account.balance_cents || 0) / 100).toFixed(2)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="table-muted">No accounts to show.</div>
+          )}
         </div>
       </section>
 
