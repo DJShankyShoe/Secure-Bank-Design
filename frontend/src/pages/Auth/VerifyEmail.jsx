@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { api } from "../../api/api";
 
@@ -35,13 +35,26 @@ export default function VerifyEmail({ onVerificationComplete, mode = "signup" })
     return () => clearTimeout(timer);
   }, [cooldown]);
 
-  useEffect(() => {
-    const verifyEmail = async () => {
-      if (!token) {
-        setStatus(isChange ? 'error' : 'prompt');
-        return;
-      }
+  // Persists across React StrictMode's dev-mode double-invoke (mount ->
+  // cleanup -> remount), unlike component state — needed because the token is
+  // single-use server-side: without this, the double-invoke fires two real
+  // verify requests, and whichever one loses the race gets "already used",
+  // which can overwrite a genuine success with "Link Expired or Invalid".
+  const verifyStartedRef = useRef(false);
 
+  useEffect(() => {
+    if (!token) {
+      setStatus(isChange ? 'error' : 'prompt');
+      return;
+    }
+    // Guards the CALL, not the result: since the ref makes this the only
+    // verifyEmail() invocation that will ever run for this token, its result
+    // is always the right one to apply, including from the StrictMode
+    // "discarded" first effect instance — there is no second call to race.
+    if (verifyStartedRef.current) return;
+    verifyStartedRef.current = true;
+
+    const verifyEmail = async () => {
       try {
         if (isChange) {
           await api.verifyEmailChange(token);

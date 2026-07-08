@@ -1,0 +1,245 @@
+name: E2E (Playwright)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E (Playwright) — shard ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+
+    # Sharded across 4 independent runners for parallelism — each shard gets
+    # its own fresh Postgres/Mailpit service containers and its own backend +
+    # frontend boot, so shards never share state (no collision risk beyond
+    # what already existed for a single run). fail-fast:false so one shard's
+    # failure doesn't cancel the others — you want to see every shard's result.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    # Postgres backs the app itself; Mailpit is an SMTP catcher the backend's
+    # SMTP_HOST/SMTP_PORT point at, so the suite can read the real emails the
+    # app sends (signup verification, email change, password reset) via
+    # Mailpit's REST API instead of reaching into the database for tokens —
+    # see frontend/e2e/fixtures/mailbox.js.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
+
+    env:
+      FLASK_SECRET_KEY: ci-only-secret-key
+      AES_ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
+      DATABASE_URL_APP: postgresql+psycopg2://app_user:app_pw@localhost:5432/securebank_e2e
+      DATABASE_URL_AUDIT_WRITER: postgresql+psycopg2://audit_writer:aw_pw@localhost:5432/securebank_e2e
+      DATABASE_URL_ADMIN_READER: postgresql+psycopg2://admin_reader:ar_pw@localhost:5432/securebank_e2e
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@securebank.example
+      TOTP_ISSUER: SecureBank
+      FRONTEND_BASE_URL: https://localhost:5173
+      FORCE_HTTPS: "true"          # matches real local dev: the Vite proxy sets X-Forwarded-Proto
+      CLEANUP_INTERVAL_SECONDS: "0"
+      PW_BASE_URL: https://localhost:5173
+      MAILPIT_URL: http://127.0.0.1:8025
+      PW_PGHOST: 127.0.0.1
+      PW_PGPORT: "5432"
+      PW_PGUSER: app_user
+      PW_PGPASSWORD: app_pw
+      PW_PGDATABASE: securebank_e2e
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend runtime deps + gunicorn
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install "gunicorn==23.0.0"
+
+      # A completely EMPTY database is required: FR-08 auto-bootstraps the
+      # first-ever registered account as superadmin, and e2e/global-setup.js
+      # relies on that happening exactly once, for its own registration. Each
+      # shard runs against its OWN fresh service container, so each shard
+      # bootstraps its own independent superadmin — no cross-shard collision.
+      - name: Apply schema, roles and grants (fresh DB)
+        working-directory: backend
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE securebank_e2e;"
+          for f in 01_schemas_roles 02_application 03_session 04_audit 05_grants 06_seed_billers; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -d securebank_e2e -f "sql/$f.sql"
+          done
+          psql -h localhost -U postgres -d securebank_e2e -c \
+            "ALTER ROLE app_user PASSWORD 'app_pw'; \
+             ALTER ROLE audit_writer PASSWORD 'aw_pw'; \
+             ALTER ROLE admin_reader PASSWORD 'ar_pw';"
+
+      - name: Boot the backend (gunicorn, background)
+        working-directory: backend
+        run: |
+          # Plain HTTP on 8000 (TLS termination is nginx's job normally; here
+          # the Vite dev server's proxy talks to it over plain HTTP and
+          # forwards X-Forwarded-Proto: https, same as real local dev).
+          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 2 \
+            --timeout 60 > "$GITHUB_WORKSPACE/gunicorn.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -m 3 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "backend up after $((i-1))s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend did not boot:"; cat "$GITHUB_WORKSPACE/gunicorn.log"; exit 1
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Cache the downloaded browser binaries (~/.cache/ms-playwright) keyed
+      # on the frontend lockfile hash, so a run that doesn't bump
+      # @playwright/test skips re-downloading Chromium from Playwright's CDN
+      # entirely. The OS-level shared libraries `--with-deps` installs via
+      # apt are NOT part of this cache (they live outside the home dir on a
+      # throwaway VM) — on a cache hit we still run `install-deps` to restore
+      # just those, which is fast (local apt mirror) compared to the browser
+      # download this cache is actually saving.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers (cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies (cache hit — browsers already present)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: frontend
+        run: npx playwright install-deps chromium
+
+      - name: Boot the frontend dev server (background)
+        working-directory: frontend
+        run: |
+          nohup npm run dev > "$GITHUB_WORKSPACE/vite.log" 2>&1 &
+          # Use "localhost" (not 127.0.0.1) — Vite's own ready-log reports
+          # https://localhost:5173/, and on some runners 127.0.0.1 doesn't
+          # reach the same socket if Vite ends up bound to the IPv6 loopback
+          # (this is also what PW_BASE_URL points the actual test run at).
+          for i in $(seq 1 30); do
+            if curl -fsSk -m 3 https://localhost:5173/ >/dev/null 2>&1; then
+              echo "frontend up after $((i-1))s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "frontend did not boot:"; cat "$GITHUB_WORKSPACE/vite.log"; exit 1
+
+      - name: Run Playwright E2E suite (shard ${{ matrix.shard }}/4)
+        working-directory: frontend
+        run: npx playwright test --shard=${{ matrix.shard }}/4
+
+      # Blob reports (playwright.config.js uses the 'blob' reporter in CI) are
+      # small, per-shard result bundles with no HTML/assets — the
+      # merge-reports job below stitches all 4 into one browsable HTML report,
+      # which is what actually gets uploaded as "playwright-report".
+      - name: Upload blob report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: frontend/blob-report
+          retention-days: 1
+
+      - name: Upload backend/frontend logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: e2e-server-logs-${{ matrix.shard }}
+          path: |
+            gunicorn.log
+            vite.log
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Stitches the 4 shards' blob reports into a single browsable HTML report.
+  # Best-effort only (continue-on-error at the job level): a reporting hiccup
+  # here must never block deploy — the actual pass/fail gate is the `e2e`
+  # job(s) above, which `ci.yml`'s `deploy`/`deploy-test` already `needs`.
+  # ---------------------------------------------------------------------------
+  merge-reports:
+    name: Merge Playwright reports
+    if: always()
+    needs: [e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Download all shards' blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: blob-report-*
+          path: frontend/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge into a single HTML report
+        working-directory: frontend
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - name: Upload merged HTML report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 14

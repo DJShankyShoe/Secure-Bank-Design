@@ -25,6 +25,13 @@ dependency-check-report/
 reports/
 *.log
 
+# Playwright E2E (frontend/e2e) — generated per-run, never committed
+frontend/e2e/.auth/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
 # Windows / WSL metadata
 *:Zone.Identifier
 node_modules/
