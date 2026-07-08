@@ -39,12 +39,13 @@ so each control can be reviewed in one place.
 | **Database** | **PostgreSQL 16** — three schemas, three least-privilege roles |
 | **Security libs** | argon2-cffi (Argon2id), cryptography (AES-256-GCM), pyotp (TOTP), Flask-WTF (CSRF), Flask-Talisman (headers) |
 | **Edge** | nginx reverse proxy + Cloudflare (TLS, per-IP rate limiting, WAF) |
-| **CI/CD** | GitHub Actions (9 workflow files): pytest · flake8 · Bandit · Semgrep · OWASP Dependency-Check · Gitleaks · OWASP ZAP · Dependabot; separate production + test deploy targets |
+| **CI/CD** | GitHub Actions (10 workflow files): pytest · flake8 · Bandit · Playwright E2E · Semgrep · OWASP Dependency-Check · Gitleaks · OWASP ZAP · Dependabot; separate production + test deploy targets |
 
 **Feature set:** MFA login (password → TOTP), in-house server-side sessions, admin-approved account
 open/close flows, fund transfer with a **PIN step-up for ≥ SGD 1,000**, bill payment to allowlisted
-billers, admin oversight with a full audit log, and self-service recovery (account unlock,
-forgot-password, email change) — all audited.
+billers, admin oversight with a full audit log, self-service recovery (forgot-password, email
+change — a lockout itself only auto-expires or needs an admin), and a customer notification bell —
+all audited.
 
 ---
 
@@ -90,15 +91,16 @@ SecureBank/
 │   │   ├── extensions.py             # SQLAlchemy engines/binds (app / session / audit), CSRFProtect, Talisman
 │   │   │
 │   │   ├── blueprints/               # one folder per feature; routes.py = HTTP surface, service.py = domain logic
-│   │   │   ├── auth/                  # registration, 2-stage login+MFA, PIN, lockout/unlock, reset, email change
+│   │   │   ├── auth/                  # registration, 2-stage login+MFA, PIN, brute-force lockout, reset, email change
 │   │   │   │   ├── routes.py          #   HTTP endpoints + which decorators guard each
 │   │   │   │   ├── service.py         #   registration, credentials, NRIC blind-index uniqueness, PIN set
-│   │   │   │   ├── login_service.py   #   password→MFA flow + signed token serializers (verify/reset/unlock)
+│   │   │   │   ├── login_service.py   #   password→MFA flow + signed token serializers (MFA/reset/signup-email)
 │   │   │   │   └── email_service.py   #   email-change request/verify flow
 │   │   │   ├── accounts/              # open-request/approve, view, paginated history, close-request
 │   │   │   ├── transactions/          # transfer (atomic + PIN step-up), bill payment, PIN mgmt, idempotency
 │   │   │   ├── admin/                 # RBAC oversight (customer-scoped): users/accounts, approvals, NRIC reveal, audit read
-│   │   │   └── superadmin/             # role assignment + admin/staff management; full-scope audit read
+│   │   │   ├── superadmin/            # role assignment + admin/staff management; full-scope audit read
+│   │   │   └── notifications/         # customer notification bell — list, mark read/read-all (FR-10)
 │   │   │
 │   │   ├── models/                   # SQLAlchemy models, SPLIT BY SCHEMA (mirrors the DB privilege boundary)
 │   │   │   ├── base.py               #   declarative base / shared column mixins
@@ -140,20 +142,27 @@ SecureBank/
 │   └── setup.cfg                     # flake8 (PEP 8) config — 100-char lines
 │
 ├── frontend/                         # React + Vite single-page app
-│   └── src/
-│       ├── main.jsx                  # React DOM entry point
-│       ├── App.jsx                   # global auth state + protected routing ("traffic cop") + <NotificationHost/>
-│       ├── api/api.js                # single API client: CSRF bootstrap, 401/session handling, every endpoint
-│       ├── components/               # Layout.jsx + AdminLayout.jsx (nav shells) · SessionTimer.jsx (idle countdown)
-│       ├── ui/notify.jsx             # in-app toast + confirm/prompt modal kit (replaces browser alert/confirm/prompt)
-│       ├── pages/                    # one folder per domain area
-│       │   ├── Auth/                 #   Login, Register, RegisterTotpSetup, ForgotPassword, ResetPassword, SetupPin, VerifyEmail
-│       │   ├── Dashboard/            #   Overview (balances) · History (filterable transactions)
-│       │   ├── Transactions/         #   Transfer (PIN step-up ≥ SGD 1,000) · PayBill
-│       │   ├── Accounts/             #   Manage (open / close)
-│       │   ├── Settings/             #   Settings (email, password, notification toggles)
-│       │   └── Admin/                #   Users, Openings, Closures, Audit
-│       └── styles.css                # global theme + component styles
+│   ├── src/
+│   │   ├── main.jsx                  # React DOM entry point
+│   │   ├── App.jsx                   # global auth state + protected routing ("traffic cop") + <NotificationHost/>
+│   │   ├── api/api.js                # single API client: CSRF bootstrap, 401/session handling, every endpoint
+│   │   ├── components/               # Layout.jsx + AdminLayout.jsx (nav shells) · SessionTimer.jsx (idle countdown)
+│   │   │                             #   · NotificationBell.jsx (header bell, FR-10)
+│   │   ├── ui/notify.jsx             # in-app toast + confirm/prompt modal kit (replaces browser alert/confirm/prompt)
+│   │   ├── pages/                    # one folder per domain area
+│   │   │   ├── Auth/                 #   Login, Register, RegisterTotpSetup, ForgotPassword, ResetPassword, SetupPin, VerifyEmail
+│   │   │   ├── Dashboard/            #   Overview (balances) · History (filterable transactions)
+│   │   │   ├── Transactions/         #   Transfer (PIN step-up ≥ SGD 1,000) · PayBill
+│   │   │   ├── Accounts/             #   Manage (open / close)
+│   │   │   ├── Settings/             #   Settings (email, password, notification toggles)
+│   │   │   └── Admin/                #   Users, Openings, Closures, Audit
+│   │   └── styles.css                # global theme + component styles
+│   └── e2e/                          # Playwright E2E suite — real backend+frontend+Mailpit, no mocking (§7/§8)
+│       ├── global-setup.js           #   runs once: bootstraps the first-ever account as superadmin (FR-08)
+│       ├── fixtures/                 #   totp.js (code gen) · mailbox.js (Mailpit client) · db.js (test-only funding)
+│       │                             #   · helpers.js (registration/login/admin-setup flows every spec reuses)
+│       └── specs/                    #   one file per FR: registration, login, accounts, dashboard, settings,
+│                                      #   transfer, bill-payment, password-reset, notifications, admin/superadmin RBAC
 │
 ├── nginx/nginx.conf                  # reverse proxy: per-IP rate limits, body caps, forwards real client IP (infra)
 ├── docker-compose.yml                # nginx service — serves frontend/dist + proxies to the backend
@@ -166,6 +175,7 @@ SecureBank/
 │   │   ├── sast-semgrep.yml          #   Semgrep — OWASP Top Ten + Python + JavaScript rulesets (BLOCKING)
 │   │   ├── secret-scan-gitleaks.yml  #   Gitleaks — full git-history secret scan (BLOCKING)
 │   │   ├── dast-zap.yml              #   OWASP ZAP baseline — boots the app, scans it running (BLOCKING)
+│   │   ├── e2e-playwright.yml        #   Playwright E2E — live backend+frontend+Mailpit, every FR (BLOCKING)
 │   │   ├── deploy-production.yml     #   SSH deploy to production EC2 — gated on the production branch
 │   │   └── deploy-test.yml           #   SSH deploy to a separate test EC2 host — gated on integration-test
 │   └── dependabot.yml                # weekly, grouped dependency-update PRs (pip/npm/github-actions), 7-day cooldown
@@ -196,7 +206,8 @@ The layout is deliberate — these are the conventions a reviewer can rely on:
   privilege is enforced at the database** (e.g. `audit_writer` gets `INSERT` and nothing else).
 - **Tests mirror the modules.** `tests/test_<area>.py` maps 1:1 to the app modules, and the
   security-control cases (lockout, IDOR → 404, CSRF → 403, idempotency replay, atomic rollback, audit
-  emission) sit right beside the happy-path tests.
+  emission) sit right beside the happy-path tests. `frontend/e2e/specs/` mirrors the FRs the same
+  way — one spec file per feature area, driving the real backend + frontend + Mailpit end-to-end.
 - **Requirement traceability.** Controls carry their **FR-xx / SR-xx** IDs in comments, so any finding
   maps straight back to the requirement it implements.
 
@@ -239,7 +250,9 @@ Each Security Requirement maps to concrete, reviewable code:
 
 Feature areas (FR) map to the matching blueprint + page folder: **auth/recovery** → `blueprints/auth`
 + `pages/Auth`, **accounts** → `blueprints/accounts` + `pages/Accounts`, **transfer/bill-pay** →
-`blueprints/transactions` + `pages/Transactions`, **admin/RBAC** → `blueprints/admin` + `pages/Admin`.
+`blueprints/transactions` + `pages/Transactions`, **admin/RBAC** → `blueprints/admin` +
+`blueprints/superadmin` + `pages/Admin`, **notification bell** → `blueprints/notifications`
+(rendered via the header's bell icon in `components/`, not its own page folder).
 
 ---
 
@@ -265,6 +278,9 @@ npm install
 npm run build       # production build must succeed with 0 errors
 npm audit           # dependency SCA
 ```
+
+**End-to-end tests** — the full Playwright suite (`frontend/e2e/`) needs a live backend, frontend,
+and Mailpit, so it's not a quick one-liner; see §7 for the local setup and §8 for the CI job.
 
 **Full security scanners** (Semgrep, Gitleaks, OWASP Dependency-Check, ZAP) run in CI — see the next
 two sections for what they cover and how to reproduce them.
@@ -292,6 +308,18 @@ npm run dev         # Vite dev server on http://localhost:5173 (HMR)
 and proxies the API paths to the backend — deploy **same-origin** so the `SameSite=Strict` session
 cookie and CSRF flow work.
 
+**End-to-end tests** (`frontend/e2e/`, Playwright — see §8 for the CI job). Drives the real backend +
+frontend + a [Mailpit](https://github.com/axllent/mailpit) SMTP catcher through actual browser
+sessions (registration, TOTP, transfers, admin/superadmin RBAC, etc.) — no mocking. Needs a
+**completely empty** database (FR-08 auto-bootstraps the first-ever registered account as
+superadmin) and Mailpit running locally:
+```bash
+# one-time: apply sql/01…06 to a fresh DB, point SMTP_HOST/PORT at Mailpit (127.0.0.1:1025)
+cd frontend
+npm install && npx playwright install --with-deps chromium
+npm run test:e2e            # PW_BASE_URL defaults to https://localhost:5173
+```
+
 ---
 
 ## 8. CI/CD & security scanning
@@ -310,15 +338,18 @@ exactly why `ci.yml` stays the orchestrator: it's what keeps the hard gate below
 | `sast` (`sast-semgrep.yml`) | Semgrep | OWASP Top Ten + Python + JavaScript rulesets — **BLOCKING** |
 | `secret-scan` (`secret-scan-gitleaks.yml`) | Gitleaks | scans full git history for committed secrets — **BLOCKING** |
 | `dast` (`dast-zap.yml`) | OWASP ZAP (baseline) | boots the app and scans it running — **BLOCKING** |
+| `e2e` (`e2e-playwright.yml`) | Playwright | full-suite E2E against a live backend + frontend + Mailpit (registration/TOTP, transfers, admin/superadmin RBAC, notifications, etc.) — **BLOCKING** |
 | `deploy` (`deploy-production.yml`) | SSH | deploys to the **production** EC2 host — gated on the `production` branch |
 | `deploy-test` (`deploy-test.yml`) | SSH | deploys to a **separate test** EC2 host — gated on the `integration-test` branch |
 
-**`frontend`, `backend`, `dependency-check`, `sast`, `secret-scan`, and `dast` are all hard-blocking**:
-both deploy jobs declare `needs: [frontend, backend, dependency-check, sast, secret-scan, dast]`, so a
-single Semgrep/Gitleaks/ZAP finding, a failed test, or an unresolved high-CVSS dependency stops the
-push from deploying anywhere — there is no `continue-on-error` escape hatch. Each deploy job is passed
-only the secrets it actually needs (an explicit `secrets:` map, never `secrets: inherit`), so a
-compromised production deploy step still has no path to the test host's credentials or vice versa.
+**`frontend`, `backend`, `dependency-check`, `sast`, `secret-scan`, `dast`, and `e2e` are all
+hard-blocking**: both deploy jobs declare
+`needs: [frontend, backend, dependency-check, sast, secret-scan, dast, e2e]`, so a single
+Semgrep/Gitleaks/ZAP finding, a failed test (unit or end-to-end), or an unresolved high-CVSS
+dependency stops the push from deploying anywhere — there is no `continue-on-error` escape hatch.
+Each deploy job is passed only the secrets it actually needs (an explicit `secrets:` map, never
+`secrets: inherit`), so a compromised production deploy step still has no path to the test host's
+credentials or vice versa.
 
 **Two independent deploy targets, one pipeline:**
 - **`production`** branch → the real production EC2 host — nginx + Cloudflare tunnel, TLS-terminated,
@@ -413,8 +444,6 @@ The **first-ever account** to register is bootstrapped as `superadmin`; everyone
 | `POST /auth/password/change` | Auth | Change password (current + new) |
 | `POST /auth/email` | Auth | Request an email change (current password + link to new address) |
 | `POST /auth/email/verify` | Token | Confirm the new email |
-| `POST /auth/unlock/request` | Public | Email an unlock link (locked account) |
-| `POST /auth/unlock/verify` | Token | Consume an unlock link |
 | `POST /auth/password/reset/request` | Public | Email a reset link (needs email **+ NRIC**) |
 | `GET /auth/password/reset/check` | Public | Is a reset token still valid? (call on page load) |
 | `POST /auth/password/reset/verify` | Token | Set a new password (token + TOTP) |
@@ -430,6 +459,9 @@ The **first-ever account** to register is bootstrapped as `superadmin`; everyone
 | `GET /transactions/billers` | Auth | List allowlisted billers |
 | `POST /transactions/transfer` | Auth | Transfer funds (`Idempotency-Key`) |
 | `POST /transactions/bill-payment` | Auth | Pay a biller (`Idempotency-Key`) |
+| `GET /notifications` | Auth | List own notifications, newest-first, + unread count (`?page=`) |
+| `POST /notifications/{id}/read` | Auth | Mark one notification read |
+| `POST /notifications/read-all` | Auth | Mark all notifications read |
 | `GET /admin/users` | Admin | List/search users (`?q=`) |
 | `GET /admin/users/{id}/accounts` | Admin | One user's accounts (drill-down) |
 | `GET /admin/accounts` | Admin | List all accounts |
@@ -510,7 +542,7 @@ generic `401` (the seed is never re-exposed once set up). Wrong passwords count 
 { "token": "..." }
 // → 200 { "status": "active" }   // or "pending" if TOTP isn't confirmed yet
 ```
-The link is `<FRONTEND_BASE_URL>/verify-signup?token=…` (24-h expiry). The SPA reads `token` from the
+The link is `<FRONTEND_BASE_URL>/verify-email?token=…` (24-h expiry). The SPA reads `token` from the
 query string and POSTs it here.
 
 #### `POST /auth/login`  (stage 1)
@@ -583,16 +615,6 @@ owner is notified if a hijacked session tries to change the email.
 { "token": "..." }                          // → 200 { "status": "email_updated", "email": "new@b.com" }
 ```
 
-#### `POST /auth/unlock/request`  — for a locked-out account (emails a 30-min unlock link)
-```jsonc
-{ "email": "a@b.com" }                      // → 200 { "status": "unlock_requested" }
-```
-
-#### `POST /auth/unlock/verify`
-```jsonc
-{ "token": "..." }                          // → 200 { "status": "unlocked" }
-```
-
 #### `POST /auth/password/reset/request`  — forgot password (emails a 30-min single-use link)
 Requires **both** email **and** NRIC — a link is sent only if they match an existing account.
 ```jsonc
@@ -621,7 +643,9 @@ On success **all existing sessions are revoked** and any lockout is cleared. The
 (`totp_code` accepts a current TOTP or any unused backup code.)
 
 > The reset email contains a **clickable link** (`<FRONTEND_BASE_URL>/reset-password?token=…`), not a
-> raw token; the SPA reads `token` from the query string. The verify/unlock emails work the same way.
+> raw token; the SPA reads `token` from the query string. The verify-email/verify-email-change
+> emails work the same way. (A lockout alert email carries **no** token/link — a locked account has
+> no self-service unlock; it only auto-expires after 30 min or an admin unlocks it.)
 
 ---
 
@@ -733,6 +757,30 @@ a different body.
   "source_account_number": "0123456789", "biller_id": "uuid", "biller_name": "Singtel",
   "completed_at": "..." }
 ```
+
+---
+
+### Notifications — `/notifications`  *(all require auth; own data only, FR-10)*
+
+Backs the customer notification bell. Raised on: account lockout, admin suspend/reactivate of the
+user, admin suspend/unsuspend/close of a bank account, and open/close request approve/reject.
+History is kept — marking read never deletes anything.
+
+#### `GET /notifications`  — list, newest-first, + unread count
+```jsonc
+// ?page=1 (25/page)
+{ "items": [ { "notification_id": "uuid", "category": "account_locked",
+    "title": "...", "body": "...", "read_at": null, "created_at": "..." } ],
+  "unread_count": 3 }
+```
+Read-only — does **not** slide the SR-13 idle-session timer (the bell polls every 60 s in the
+background regardless of whether the user is present).
+
+#### `POST /notifications/{id}/read`
+→ `200 { "status": "ok" }` · `404` if it isn't yours (IDOR-safe).
+
+#### `POST /notifications/read-all`
+→ `200 { "status": "ok", "marked": <count> }`
 
 ---
 

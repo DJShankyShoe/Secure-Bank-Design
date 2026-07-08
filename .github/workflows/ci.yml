@@ -13,8 +13,9 @@ name: CI
 # This file is an ORCHESTRATOR ONLY: each job below delegates its real work to
 # a separate reusable workflow file via `uses:` (frontend-build.yml,
 # backend-tests.yml, dependency-check.yml, sast-semgrep.yml,
-# secret-scan-gitleaks.yml, dast-zap.yml, deploy-production.yml,
-# deploy-test.yml — all in this same directory). Splitting into files is
+# secret-scan-gitleaks.yml, dast-zap.yml, e2e-playwright.yml,
+# deploy-production.yml, deploy-test.yml — all in this same directory).
+# Splitting into files is
 # purely for Actions-sidebar clarity — `needs:` still only works within one
 # file, so this file is what keeps the hard gate intact: `deploy` and
 # `deploy-test` still cannot start until every job they `needs` has
@@ -65,10 +66,16 @@ jobs:
     name: DAST (OWASP ZAP baseline)
     uses: ./.github/workflows/dast-zap.yml
 
+  e2e:
+    name: E2E (Playwright)
+    uses: ./.github/workflows/e2e-playwright.yml
+
   # ---------------------------------------------------------------------------
   # CD — deploy to the production EC2 host, but ONLY after CI passes.
   #   * needs: [...] -> deploys ONLY if build/tests AND every security gate
-  #     went green (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST).
+  #     went green (SCA, Semgrep SAST, Gitleaks secret scan, ZAP DAST, and the
+  #     full Playwright E2E suite — real registration/login/transfer/RBAC
+  #     flows against a live app, not just unit-level coverage).
   #   * if: only on a push/manual-run of the production branch (so pushes to
   #     integration-test/Frontend/backend and all PRs never deploy here —
   #     integration-test has its own deploy-test job below, targeting a
@@ -90,7 +97,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to Production EC2
-    needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
+    needs: [frontend, backend, dependency-check, sast, secret-scan, dast, e2e]
     if: >-
       github.ref == 'refs/heads/production' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -119,7 +126,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy-test:
     name: Deploy to Test EC2
-    needs: [frontend, backend, dependency-check, sast, secret-scan, dast]
+    needs: [frontend, backend, dependency-check, sast, secret-scan, dast, e2e]
     if: >-
       github.ref == 'refs/heads/integration-test' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
