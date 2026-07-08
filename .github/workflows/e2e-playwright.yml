@@ -44,6 +44,13 @@ jobs:
 
       mailpit:
         image: axllent/mailpit:latest
+        # Mailpit's SMTP server does a reverse-DNS lookup on connect before
+        # sending its greeting banner; on a runner where that lookup can't
+        # resolve, it stalls for ~10s — which races the app's own 10s SMTP
+        # connect timeout (services/email.py) and intermittently times out
+        # signup/reset/alert emails. Disabling it makes the greeting instant.
+        env:
+          MP_SMTP_DISABLE_RDNS: "true"
         ports:
           - 1025:1025
           - 8025:8025
