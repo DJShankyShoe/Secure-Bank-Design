@@ -10,6 +10,8 @@
 // in the real app, not just untested.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
+  expectToast,
   fillField,
   login,
   onboardCustomer,
@@ -28,7 +30,7 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
     await fillField(emailCard, 'New Email Address', 'someone-new@example.com');
     await fillField(emailCard, 'Current Password', 'TotallyWrongPassword1!');
     await page.getByRole('button', { name: 'Send Verification Link' }).click();
-    await expect(page.locator('.toast--error')).toBeVisible();
+    await expectToast(page, 'error');
   });
 
   test('email change: link goes to the NEW address, alert goes to the OLD address, activates only after the link is used', async ({ page }) => {
@@ -41,7 +43,7 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
     await fillField(emailCard, 'New Email Address', newEmail);
     await fillField(emailCard, 'Current Password', user.password);
     await page.getByRole('button', { name: 'Send Verification Link' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     // Old address gets a no-token security alert; still shown as current until used.
     const alertMsg = await waitForEmail(user.email);
@@ -53,10 +55,10 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
     const verifyMsg = await waitForEmail(newEmail);
     const token = extractToken(verifyMsg.Text, '/verify-email-change');
     await page.goto(`/verify-email-change?token=${token}`);
-    await expect(page.getByRole('button', { name: 'Back to Settings' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Back to Settings' })).toBeVisible({ timeout: NAV_TIMEOUT });
 
     await page.goto('/settings');
-    await expect(page.getByText(newEmail)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(newEmail)).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 
   test('password change revokes other sessions but keeps the current one signed in', async ({ page, browser }) => {
@@ -75,7 +77,7 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
     await fillField(pwCard, 'New Password (Min 12 characters)', newPassword);
     await fillField(pwCard, 'Confirm New Password', newPassword);
     await page.getByRole('button', { name: 'Update Password' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     // This session (the one that changed it) stays signed in.
     await page.reload();
@@ -83,7 +85,7 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
 
     // The OTHER session was revoked.
     await otherPage.reload();
-    await expect(otherPage).toHaveURL(/\/login$/, { timeout: 10_000 });
+    await expect(otherPage).toHaveURL(/\/login$/, { timeout: NAV_TIMEOUT });
 
     await otherCtx.close();
   });
@@ -108,7 +110,7 @@ test.describe('Settings: email change, password change, PIN, preferences', () =>
     await fillField(pinCard, 'New 6-digit PIN', '224466');
     await fillField(pinCard, 'Confirm New PIN', '224466');
     await page.getByRole('button', { name: 'Update PIN' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
   });
 
   test('notification preference toggles persist across a reload', async ({ page }) => {

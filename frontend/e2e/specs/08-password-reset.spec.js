@@ -4,7 +4,7 @@
 // which never re-checks NRIC). Both steps stay generic (anti-enumeration,
 // SR-09), and a reset must NOT clear an existing brute-force lockout.
 import { test, expect } from '@playwright/test';
-import { fillAndSubmitLoginPassword, login, registerAndActivate } from '../fixtures/helpers.js';
+import { NAV_TIMEOUT, fillAndSubmitLoginPassword, login, registerAndActivate } from '../fixtures/helpers.js';
 import { freshTotp } from '../fixtures/totp.js';
 import { waitForEmail, waitForEmailCount, searchEmails, extractToken } from '../fixtures/mailbox.js';
 
@@ -13,7 +13,7 @@ async function requestReset(page, email, nric) {
   await page.getByLabel('NRIC').fill(nric);
   await page.getByLabel('Registered Email Address').fill(email);
   await page.getByRole('button', { name: 'Send Recovery Link' }).click();
-  await expect(page.getByText(/a password reset link has been sent/i)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/a password reset link has been sent/i)).toBeVisible({ timeout: NAV_TIMEOUT });
 }
 
 test.describe('Password reset (forgot password)', () => {
@@ -39,16 +39,16 @@ test.describe('Password reset (forgot password)', () => {
     const token = extractToken(msg.Text, '/reset-password');
 
     await page.goto(`/reset-password?token=${token}`);
-    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: NAV_TIMEOUT });
     await page.getByLabel('New Password').fill('Ev3nStr0nger!Pw#2');
     await page.getByLabel('Confirm Password').fill('Ev3nStr0nger!Pw#2');
     await page.getByLabel('Authenticator Code').fill('000000');
     await page.getByRole('button', { name: 'Reset password' }).click();
-    await expect(page.getByText('Verification code is incorrect.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Verification code is incorrect.')).toBeVisible({ timeout: NAV_TIMEOUT });
 
     // Old password still works -> nothing was changed.
     await fillAndSubmitLoginPassword(page, user.email, user.password);
-    await page.waitForSelector('#securityCode', { timeout: 10_000 });
+    await page.waitForSelector('#securityCode', { timeout: NAV_TIMEOUT });
   });
 
   test('correct TOTP resets the password and revokes ALL existing sessions', async ({ page, browser }) => {
@@ -65,22 +65,22 @@ test.describe('Password reset (forgot password)', () => {
     const newPassword = 'Ev3nStr0nger!Pw#2';
 
     await page.goto(`/reset-password?token=${token}`);
-    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: NAV_TIMEOUT });
     await page.getByLabel('New Password').fill(newPassword);
     await page.getByLabel('Confirm Password').fill(newPassword);
     await page.getByLabel('Authenticator Code').fill(await freshTotp(user.secret));
     await page.getByRole('button', { name: 'Reset password' }).click();
-    await expect(page).toHaveURL(/\/login$/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/login$/, { timeout: NAV_TIMEOUT });
 
     // Old password now fails; new one works.
     await fillAndSubmitLoginPassword(page, user.email, user.password);
-    await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: NAV_TIMEOUT });
     await fillAndSubmitLoginPassword(page, user.email, newPassword);
-    await page.waitForSelector('#securityCode', { timeout: 10_000 });
+    await page.waitForSelector('#securityCode', { timeout: NAV_TIMEOUT });
 
     // The pre-existing session is dead.
     await otherPage.reload();
-    await expect(otherPage).toHaveURL(/\/login$/, { timeout: 10_000 });
+    await expect(otherPage).toHaveURL(/\/login$/, { timeout: NAV_TIMEOUT });
     await otherCtx.close();
   });
 
@@ -89,7 +89,7 @@ test.describe('Password reset (forgot password)', () => {
 
     for (let i = 0; i < 5; i += 1) {
       await fillAndSubmitLoginPassword(page, user.email, 'DefinitelyWrong123!');
-      await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: NAV_TIMEOUT });
     }
 
     await requestReset(page, user.email, user.nric);
@@ -98,15 +98,15 @@ test.describe('Password reset (forgot password)', () => {
     const newPassword = 'Ev3nStr0nger!Pw#2';
 
     await page.goto(`/reset-password?token=${token}`);
-    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Reset password' })).toBeVisible({ timeout: NAV_TIMEOUT });
     await page.getByLabel('New Password').fill(newPassword);
     await page.getByLabel('Confirm Password').fill(newPassword);
     await page.getByLabel('Authenticator Code').fill(await freshTotp(user.secret));
     await page.getByRole('button', { name: 'Reset password' }).click();
-    await expect(page).toHaveURL(/\/login$/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/login$/, { timeout: NAV_TIMEOUT });
 
     // Even with the brand-new (correct) password, the account is still locked.
     await fillAndSubmitLoginPassword(page, user.email, newPassword);
-    await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/invalid/i)).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 });

@@ -9,9 +9,11 @@
 // impossible to repeat against the same DB).
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   STRONG_PASSWORD,
   WEAK_PASSWORD,
   completeTotpSetup,
+  expectToast,
   fillRegisterForm,
   registerUser,
   uniqueEmail,
@@ -43,7 +45,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
       password: WEAK_PASSWORD,
     });
     await page.getByRole('button', { name: 'Register', exact: true }).click();
-    await expect(page.locator('.toast--error')).toBeVisible();
+    await expectToast(page, 'error');
     // Rejected server-side -> never navigates to the TOTP setup page.
     await expect(page).toHaveURL(/\/register$/);
   });
@@ -60,7 +62,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
     });
     await page.getByRole('button', { name: 'Register', exact: true }).click();
     const dupEmailToast = page.locator('.toast--error');
-    await expect(dupEmailToast).toBeVisible();
+    await expect(dupEmailToast).toBeVisible({ timeout: NAV_TIMEOUT });
     const dupEmailMessage = await dupEmailToast.textContent();
     await expect(page).toHaveURL(/\/register$/);
 
@@ -73,7 +75,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
     });
     await page.getByRole('button', { name: 'Register', exact: true }).click();
     const dupNricToast = page.locator('.toast--error');
-    await expect(dupNricToast).toBeVisible();
+    await expect(dupNricToast).toBeVisible({ timeout: NAV_TIMEOUT });
     const dupNricMessage = await dupNricToast.textContent();
     await expect(page).toHaveURL(/\/register$/);
 
@@ -88,7 +90,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
     await expect(page).toHaveURL(/\/verify-email$/);
 
     await page.getByRole('button', { name: 'Resend Verification Email' }).click();
-    await expect(page.getByText(/a new link is on its way/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/a new link is on its way/i)).toBeVisible({ timeout: NAV_TIMEOUT });
     await waitForEmailCount(user.email, 2);
   });
 
@@ -105,7 +107,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
     await page.getByRole('button', { name: 'Secure Log In' }).click();
     // Backend reports totp_confirmed:false -> Login.jsx redirects straight here
     // (never shows an MFA-code screen at all).
-    await page.waitForURL('**/register/totp', { timeout: 15_000 });
+    await page.waitForURL('**/register/totp', { timeout: NAV_TIMEOUT });
 
     // No QR shown yet — the old bug's dead-end message, now replaced with a
     // real way to get the QR.
@@ -114,7 +116,7 @@ test.describe('Registration + TOTP setup (FR-01)', () => {
     await page.locator('input[type="password"]').fill(user.password);
     await page.getByRole('button', { name: 'Show QR Code' }).click();
 
-    await expect(page.locator('input[readonly]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[readonly]')).toBeVisible({ timeout: NAV_TIMEOUT });
     const secret = await page.locator('input[readonly]').inputValue();
     expect(secret).toBe(user.secret); // same seed, never rotated
 

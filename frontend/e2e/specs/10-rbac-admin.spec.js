@@ -3,6 +3,7 @@
 // and the admin audit view withholds staff-to-staff activity.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   apiGet,
   apiPost,
   createAdminUser,
@@ -19,7 +20,7 @@ test.describe('Admin RBAC (customer oversight only)', () => {
     // authenticated) session to /login, but /login's OWN route then
     // immediately re-redirects an already-authenticated user to their role's
     // home — so the customer ends up back on /dashboard, not stuck on /login.
-    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/dashboard$/, { timeout: NAV_TIMEOUT });
   });
 
   test('the admin user directory excludes admins/superadmins', async ({ page, browser }) => {

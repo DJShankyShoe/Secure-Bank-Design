@@ -7,10 +7,12 @@
 // drive, so that path isn't covered here (nothing to click).
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   apiPost,
   approveAccountClosure,
   approveAccountOpening,
   createAdminUser,
+  expectToast,
   fieldByLabel,
   getSuperadmin,
   onboardCustomer,
@@ -28,7 +30,7 @@ async function requestClosure(page, accountNumber, secret) {
   const code = await freshTotp(secret);
   await fieldByLabel(page, 'Authenticator Code (TOTP)').locator('input').fill(code);
   await page.getByRole('button', { name: 'Request Closure' }).click();
-  await expect(page.locator('.toast--success')).toBeVisible();
+  await expectToast(page, 'success');
 }
 
 test.describe('Account open/close lifecycle', () => {
@@ -53,7 +55,7 @@ test.describe('Account open/close lifecycle', () => {
     await approveAccountOpening(browser, admin, accountNumber);
 
     await page.goto('/dashboard');
-    await expect(page.getByText(accountNumber)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(accountNumber)).toBeVisible({ timeout: NAV_TIMEOUT });
     await page.goto('/account');
     await expect(page.getByText(/awaiting admin approval/)).toHaveCount(0);
   });
@@ -71,7 +73,7 @@ test.describe('Account open/close lifecycle', () => {
     // Free to request again.
     await selectField(page, 'Account Type', 'savings');
     await page.getByRole('button', { name: 'Request Account Opening' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
   });
 
   test('customer closure request (zero balance + TOTP) then admin approves -> closed', async ({ page, browser }) => {

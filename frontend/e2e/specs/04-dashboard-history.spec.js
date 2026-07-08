@@ -2,8 +2,10 @@
 // account-exclusion fixes from this session) and transaction history filters.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   NEW_CONTEXT_OPTS,
   createAdminUser,
+  expectToast,
   fieldByLabel,
   getSuperadmin,
   login,
@@ -37,14 +39,14 @@ test.describe('Dashboard and transaction history', () => {
     // ENTIRE nested accounts table), so a plain hasText match is ambiguous —
     // .last() picks the innermost (nested, more specific) row.
     const acctRow = adminPage.locator('tr', { hasText: user.accountNumber }).last();
-    await expect(acctRow).toBeVisible({ timeout: 10_000 });
+    await expect(acctRow).toBeVisible({ timeout: NAV_TIMEOUT });
     await acctRow.getByRole('button', { name: 'Suspend' }).click();
     await promptReasonModal(adminPage, 'e2e: suspicious activity');
-    await expect(adminPage.locator('.toast--success')).toBeVisible();
+    await expectToast(adminPage, 'success');
     await adminCtx.close();
 
     await page.goto('/dashboard');
-    await expect(page.locator('.tag.warning', { hasText: 'Suspended' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.tag.warning', { hasText: 'Suspended' })).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 
   test('dashboard "Accounts" metric only counts active accounts', async ({ page, browser }) => {
@@ -53,15 +55,15 @@ test.describe('Dashboard and transaction history', () => {
     const user = await onboardCustomerWithActiveAccount(page, browser, admin);
     await page.goto('/dashboard');
     const metricCard = page.locator('.metric-card', { hasText: 'Accounts' }).locator('.metric-value');
-    await expect(metricCard).not.toHaveText('Loading...', { timeout: 10_000 });
+    await expect(metricCard).not.toHaveText('Loading...', { timeout: NAV_TIMEOUT });
     expect((await metricCard.textContent()).trim()).toBe('1');
 
     // A second (still pending) opening request must not inflate the count.
     await page.goto('/account');
     await page.getByRole('button', { name: 'Request Account Opening' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
     await page.goto('/dashboard');
-    await expect(metricCard).not.toHaveText('Loading...', { timeout: 10_000 });
+    await expect(metricCard).not.toHaveText('Loading...', { timeout: NAV_TIMEOUT });
     const metricAfter = await metricCard.textContent();
     expect(metricAfter.trim()).toBe('1');
   });
@@ -83,15 +85,15 @@ test.describe('Dashboard and transaction history', () => {
       destinationType: 'Own account',
       reference: 'e2e history fixture',
     });
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     await page.goto('/history');
     // The <option> value is the account's UUID; only its visible text is the number.
     await selectOptionContainingText(page, 'Account', user.accountNumber);
-    await expect(page.getByText('transfer', { exact: false }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('transfer', { exact: false }).first()).toBeVisible({ timeout: NAV_TIMEOUT });
 
     await fieldByLabel(page, 'Transaction Type').locator('select').selectOption('bill_payment');
     await page.getByRole('button', { name: 'Apply Filters' }).click();
-    await expect(page.getByText('No transactions found matching your criteria.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('No transactions found matching your criteria.')).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 });
