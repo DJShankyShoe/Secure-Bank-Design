@@ -123,7 +123,15 @@ jobs:
           # Plain HTTP on 8000 (TLS termination is nginx's job normally; here
           # the Vite dev server's proxy talks to it over plain HTTP and
           # forwards X-Forwarded-Proto: https, same as real local dev).
-          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 2 \
+          # --workers 3 is matched to playwright.config.js's CI worker count
+          # (also 3) — each gunicorn worker holds its own DB connection pools
+          # (3 engines x pool_size 10, hard-capped), so the two must stay in
+          # lockstep: fewer gunicorn workers than Playwright workers queues
+          # requests behind Argon2id's expensive hash and times out
+          # page.waitForURL() in the test; more risks exceeding Postgres's
+          # default max_connections (100) under concurrent load — 3 workers
+          # keeps the connection ceiling at 90, a safe margin under that.
+          nohup gunicorn 'app:create_app()' --bind 0.0.0.0:8000 --workers 3 \
             --timeout 60 > "$GITHUB_WORKSPACE/gunicorn.log" 2>&1 &
           for i in $(seq 1 30); do
             if curl -fsS -m 3 http://127.0.0.1:8000/healthz >/dev/null 2>&1; then

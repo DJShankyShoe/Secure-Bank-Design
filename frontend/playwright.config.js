@@ -19,7 +19,14 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 4 : undefined,
+  // Matched to the backend's gunicorn --workers 3 in e2e-playwright.yml — each
+  // gunicorn worker holds its own connection pools (3 engines x pool_size 10,
+  // hard-capped via max_overflow=0), so worker count on both sides must stay in
+  // lockstep: too many Playwright workers per too few gunicorn workers queues
+  // requests behind Argon2id's deliberately-expensive hash and starts timing
+  // out page.waitForURL() calls; too many gunicorn workers risks exceeding
+  // Postgres's default max_connections (100) under concurrent load.
+  workers: process.env.CI ? 3 : undefined,
   // CI runs sharded across 4 jobs (see .github/workflows/e2e-playwright.yml);
   // 'blob' emits one small per-shard result bundle (no HTML/assets) that the
   // workflow's merge-reports job stitches into a single browsable HTML report
