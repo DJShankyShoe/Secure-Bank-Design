@@ -37,10 +37,6 @@ jobs:
             git fetch --all --prune
             git checkout integration-test
             git reset --hard origin/integration-test
-            
-            echo "== Deployed commit =="
-            git log -1 --oneline
-            git rev-parse HEAD
 
             echo "== Build frontend -> frontend/dist =="
             # Clean install each deploy: node_modules is gitignored and persists on the
