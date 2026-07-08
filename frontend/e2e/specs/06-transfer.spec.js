@@ -7,6 +7,7 @@ import {
   DEFAULT_PIN,
   apiPost,
   createAdminUser,
+  expectToast,
   getSuperadmin,
   onboardCustomerWithFundedAccount,
   openApprovedAccount,
@@ -29,7 +30,7 @@ test.describe('Fund transfer', () => {
       amount: '100.00',
       destinationType: 'Own account',
     });
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
   });
 
   test('transfer at/above SGD 1,000 requires the PIN; correct PIN succeeds', async ({ page, browser }) => {
@@ -45,7 +46,7 @@ test.describe('Fund transfer', () => {
       destinationType: 'Own account',
       pin: DEFAULT_PIN,
     });
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
   });
 
   test('wrong PIN is rejected on a high-value transfer', async ({ page, browser }) => {
@@ -61,7 +62,7 @@ test.describe('Fund transfer', () => {
       destinationType: 'Own account',
       pin: '000000',
     });
-    await expect(page.locator('.toast--error')).toBeVisible();
+    await expectToast(page, 'error');
   });
 
   test('insufficient balance is rejected before execution', async ({ page, browser }) => {
@@ -76,7 +77,7 @@ test.describe('Fund transfer', () => {
       amount: '500.00',
       destinationType: 'Own account',
     });
-    await expect(page.locator('.toast--error')).toBeVisible();
+    await expectToast(page, 'error');
   });
 
   test('idempotency: replaying the same key returns the original result; a changed body 409s (SR-08)', async ({ page, browser }) => {

@@ -2,8 +2,10 @@
 // session/logout, and the AccountSuspended carve-out added this session.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   completeTotpSetup,
   createAdminUser,
+  expectToast,
   fillAndSubmitLoginPassword,
   getSuperadmin,
   login,
@@ -37,12 +39,12 @@ test.describe('Login, lockout, and suspended accounts', () => {
 
     for (let i = 0; i < 5; i += 1) {
       await fillAndSubmitLoginPassword(page, user.email, 'DefinitelyWrong123!');
-      await expect(page.locator('body')).toContainText(/invalid/i, { timeout: 10_000 });
+      await expect(page.locator('body')).toContainText(/invalid/i, { timeout: NAV_TIMEOUT });
     }
 
     // Locked now — the CORRECT password must still fail generically.
     await fillAndSubmitLoginPassword(page, user.email, user.password);
-    await expect(page.locator('body')).toContainText(/invalid/i, { timeout: 10_000 });
+    await expect(page.locator('body')).toContainText(/invalid/i, { timeout: NAV_TIMEOUT });
     await expect(page).toHaveURL(/\/login$/);
   });
 
@@ -55,7 +57,7 @@ test.describe('Login, lockout, and suspended accounts', () => {
     await page.getByLabel('Email Address').fill(user.email);
     await page.getByLabel('Password').fill(user.password);
     await page.getByRole('button', { name: 'Secure Log In' }).click();
-    await page.waitForURL('**/verify-email', { timeout: 15_000 });
+    await page.waitForURL('**/verify-email', { timeout: NAV_TIMEOUT });
   });
 
   test('logout revokes the session (SR-13) — /dashboard bounces back to /login', async ({ page }) => {
@@ -76,10 +78,10 @@ test.describe('Login, lockout, and suspended accounts', () => {
     await login(adminPage, admin.email, admin.password, admin.secret);
     await adminPage.getByPlaceholder('Search by name, email, or NRIC...').fill(customer.email);
     const row = adminPage.locator('tr', { hasText: customer.email });
-    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row).toBeVisible({ timeout: NAV_TIMEOUT });
     await row.getByRole('button', { name: 'Suspend' }).click();
     await promptReasonModal(adminPage, 'e2e fraud review');
-    await expect(adminPage.locator('.toast--success')).toBeVisible();
+    await expectToast(adminPage, 'success');
     await adminCtx.close();
 
     // Wrong password on the now-suspended account -> still the generic message.
@@ -88,6 +90,6 @@ test.describe('Login, lockout, and suspended accounts', () => {
 
     // Correct password -> reveals the suspension specifically.
     await fillAndSubmitLoginPassword(page, customer.email, customer.password);
-    await expect(page.getByText(/account has been suspended/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/account has been suspended/i)).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 });

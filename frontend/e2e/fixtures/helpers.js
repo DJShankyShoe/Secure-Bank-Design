@@ -123,9 +123,13 @@ export async function promptReasonModal(page, reason) {
   await page.locator('.modal-btn--primary, .modal-btn--danger').click();
 }
 
-/** toast.jsx success/error toasts have no fixed text — wait on the CSS class. */
+/** toast.jsx success/error toasts have no fixed text — wait on the CSS class.
+ * Uses NAV_TIMEOUT, not the global 10s default: the action behind a toast is
+ * usually a full POST -> DB (often with row locking) -> audit write -> email
+ * dispatch round trip, the same cost profile as the navigation waits above,
+ * and just as prone to landing >10s under concurrent CI load. */
 export async function expectToast(page, type = 'success') {
-  await expect(page.locator(`.toast--${type}`).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(`.toast--${type}`).first()).toBeVisible({ timeout: NAV_TIMEOUT });
 }
 
 // --------------------------------------------------------------------------- //

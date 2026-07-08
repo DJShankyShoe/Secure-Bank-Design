@@ -11,8 +11,10 @@
 // separate self-action guard already blocks first). Not covered here.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   confirmModal,
   createAdminUser,
+  expectToast,
   getSuperadmin,
   login,
   onboardCustomer,
@@ -23,7 +25,7 @@ async function searchRoleDirectory(page, query) {
   await page.getByPlaceholder('Search by name or email').fill(query);
   await page.getByRole('button', { name: 'Search' }).click();
   const row = page.locator('tr', { hasText: query });
-  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(row).toBeVisible({ timeout: NAV_TIMEOUT });
   return row;
 }
 
@@ -35,7 +37,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     // authenticated) session to /login, but /login's OWN route immediately
     // re-redirects an already-authenticated user to their role's home — so
     // the customer ends up back on /dashboard, not stuck on /login.
-    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/dashboard$/, { timeout: NAV_TIMEOUT });
   });
 
   test('an admin session cannot reach the superadmin console', async ({ page, browser }) => {
@@ -45,7 +47,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     await page.goto('/super/roles');
     // Same double-redirect as above, but this time HOME_FOR_ROLE('admin') is
     // /console/users.
-    await expect(page).toHaveURL(/\/console\/users$/, { timeout: 10_000 });
+    await expect(page).toHaveURL(/\/console\/users$/, { timeout: NAV_TIMEOUT });
   });
 
   test('superadmin promotes an admin to superadmin (revoking their session), then demotes them back', async ({ page, browser }) => {
@@ -63,10 +65,10 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     const row = await searchRoleDirectory(page, target.email);
     await row.locator('select').selectOption('superadmin');
     await confirmModal(page);
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     await targetPage.reload();
-    await expect(targetPage).toHaveURL(/\/login$/, { timeout: 10_000 });
+    await expect(targetPage).toHaveURL(/\/login$/, { timeout: NAV_TIMEOUT });
     await targetCtx.close();
 
     // Demote back down so this test doesn't leave a stray extra superadmin
@@ -74,7 +76,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     const row2 = await searchRoleDirectory(page, target.email);
     await row2.locator('select').selectOption('admin');
     await confirmModal(page);
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
   });
 
   test('superadmin suspends then reactivates an admin', async ({ page, browser }) => {
@@ -85,12 +87,12 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     const row = await searchRoleDirectory(page, target.email);
     await row.getByRole('button', { name: 'Suspend' }).click();
     await promptReasonModal(page, 'e2e superadmin suspend');
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
     await expect(row.getByText('SUSPENDED')).toBeVisible();
 
     // Reactivate (unlike Suspend) fires directly — no confirm modal.
     await row.getByRole('button', { name: 'Reactivate' }).click();
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
     await expect(row.getByText('ACTIVE')).toBeVisible();
   });
 
@@ -110,7 +112,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     const row = await searchRoleDirectory(page, target.email);
     await row.getByRole('button', { name: 'Suspend' }).click();
     await promptReasonModal(page, 'e2e audit visibility check');
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     await page.goto('/super/audit');
     await page.getByPlaceholder('Event Type (e.g. LOGIN_SUCCESS)').fill('SUPERADMIN_SUSPEND_ADMIN');
@@ -122,7 +124,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     // both this event type and this name. .first() (newest-first ordering)
     // just needs to confirm at least one such row exists.
     const auditRow = page.locator('tr', { hasText: 'SUPERADMIN_SUSPEND_ADMIN' }).filter({ hasText: target.fullName }).first();
-    await expect(auditRow).toBeVisible({ timeout: 10_000 });
+    await expect(auditRow).toBeVisible({ timeout: NAV_TIMEOUT });
 
     // No cleanup needed: `target` is this test's own isolated account (fresh
     // via createAdminUser), so leaving it suspended doesn't affect any other
@@ -137,7 +139,7 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     await login(page, superadmin.email, superadmin.password, superadmin.secret);
     const row = await searchRoleDirectory(page, target.email);
     await row.getByRole('button', { name: 'Reveal' }).click();
-    await expect(row.locator('span', { hasText: /^[STFGM]\d{7}[A-Z]$/ })).toBeVisible({ timeout: 10_000 });
+    await expect(row.locator('span', { hasText: /^[STFGM]\d{7}[A-Z]$/ })).toBeVisible({ timeout: NAV_TIMEOUT });
 
     await page.goto('/super/audit');
     await page.getByPlaceholder('Event Type (e.g. LOGIN_SUCCESS)').fill('NRIC_REVEAL');
@@ -146,6 +148,6 @@ test.describe('Superadmin RBAC (admin/role management only)', () => {
     // rows in this file share the same default name — scope to the row that
     // also shows this specific event type.
     const auditRow = page.locator('tr', { hasText: 'NRIC_REVEAL' }).filter({ hasText: target.fullName }).first();
-    await expect(auditRow).toBeVisible({ timeout: 10_000 });
+    await expect(auditRow).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 });

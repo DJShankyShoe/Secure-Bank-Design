@@ -3,7 +3,9 @@
 // created through the app (biller catalogue is config, not user input).
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   createAdminUser,
+  expectToast,
   getSuperadmin,
   onboardCustomerWithFundedAccount,
   performBillPayment,
@@ -20,10 +22,10 @@ test.describe('Bill payment', () => {
       sourceAccountNumber: user.accountNumber,
       amount: '88.80',
     });
-    await expect(page.locator('.toast--success')).toBeVisible();
+    await expectToast(page, 'success');
 
     await page.goto('/history');
-    await expect(page.getByText('bill_payment', { exact: false }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('bill_payment', { exact: false }).first()).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 
   test('insufficient balance is rejected before execution (no partial state)', async ({ page, browser }) => {
@@ -36,7 +38,7 @@ test.describe('Bill payment', () => {
       sourceAccountNumber: user.accountNumber,
       amount: '200.00',
     });
-    await expect(page.locator('.toast--error')).toBeVisible();
+    await expectToast(page, 'error');
 
     // No partial state: the failed payment must not appear in history.
     await page.goto('/history');

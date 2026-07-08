@@ -4,8 +4,10 @@
 // history is kept, so a re-open still lists the same items with a 0 badge.
 import { test, expect } from '@playwright/test';
 import {
+  NAV_TIMEOUT,
   approveAccountOpening,
   createAdminUser,
+  expectToast,
   getSuperadmin,
   login,
   onboardCustomer,
@@ -31,10 +33,10 @@ test.describe('Notification bell', () => {
     await approveAccountOpening(browser, admin, accountNumber);
 
     await page.reload(); // force a fresh mount instead of waiting on the 60s poll
-    await expect(badge(page)).toBeVisible({ timeout: 10_000 });
+    await expect(badge(page)).toBeVisible({ timeout: NAV_TIMEOUT });
 
     await bell(page).click();
-    await expect(page.getByText('Account opening approved')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Account opening approved')).toBeVisible({ timeout: NAV_TIMEOUT });
 
     // Opening the panel marked everything read -> badge clears, but the item
     // itself is kept (no delete) — still there on a later re-open.
@@ -42,7 +44,7 @@ test.describe('Notification bell', () => {
     await page.reload();
     await expect(badge(page)).toHaveCount(0);
     await bell(page).click();
-    await expect(page.getByText('Account opening approved')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Account opening approved')).toBeVisible({ timeout: NAV_TIMEOUT });
   });
 
   test('admin-suspending the user sends the "Account suspended" alert email', async ({ page, browser }) => {
@@ -55,10 +57,10 @@ test.describe('Notification bell', () => {
     await login(adminPage, admin.email, admin.password, admin.secret);
     await adminPage.getByPlaceholder('Search by name, email, or NRIC...').fill(user.email);
     const row = adminPage.locator('tr', { hasText: user.email });
-    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row).toBeVisible({ timeout: NAV_TIMEOUT });
     await row.getByRole('button', { name: 'Suspend' }).click();
     await promptReasonModal(adminPage, 'e2e notification check');
-    await expect(adminPage.locator('.toast--success')).toBeVisible();
+    await expectToast(adminPage, 'success');
     await adminCtx.close();
 
     // The suspension revokes the customer's own session server-side (FR-08),
