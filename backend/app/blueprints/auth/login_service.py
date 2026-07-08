@@ -477,9 +477,10 @@ def verify_password_reset(
     only issued when both match — so here the caller just needs the link plus a
     valid **TOTP code or one-time backup code** (step-up), rate-limited 5/min
     (SR-11). On success the new password is re-validated against the FR-01 policy,
-    re-hashed with Argon2id, any lockout is cleared, and ALL of the user's sessions
-    are revoked so a stolen session cannot survive the reset (SR-13). Single-use via
-    the password-hash fingerprint. Generic errors.
+    re-hashed with Argon2id, any existing lockout is deliberately left intact
+    (a reset must never be a lockout bypass — SR-09), and ALL of the user's
+    sessions are revoked so a stolen session cannot survive the reset (SR-13).
+    Single-use via the password-hash fingerprint. Generic errors.
     """
     parsed = _read_reset_token(token or "")
     if parsed is None:

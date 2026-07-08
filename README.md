@@ -639,7 +639,8 @@ Identity (email + NRIC) was already proven at the **request** step, so here you 
 ```
 `new_password` must meet the FR-01 policy (≥12 chars, mixed case, digit, symbol) → else `400`;
 `400` on a bad/expired/already-used token; `401` if `totp_code` is wrong; `429` on too many attempts.
-On success **all existing sessions are revoked** and any lockout is cleared. The link is single-use.
+On success **all existing sessions are revoked**, but an existing lockout is deliberately left
+intact (a reset must never be a lockout bypass — SR-09). The link is single-use.
 (`totp_code` accepts a current TOTP or any unused backup code.)
 
 > The reset email contains a **clickable link** (`<FRONTEND_BASE_URL>/reset-password?token=…`), not a
