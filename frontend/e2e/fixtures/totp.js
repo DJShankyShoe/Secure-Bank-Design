@@ -69,6 +69,51 @@ export function secretFromUri(uri) {
 // as a replay. A shared file makes the tracking process-independent.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STEP_FILE = path.join(__dirname, '..', '.auth', 'totp-steps.json');
+const LOCK_FILE = `${STEP_FILE}.lock`;
+const STALE_LOCK_MS = 10_000; // a crashed process must never wedge every worker forever
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Plain read-then-write on STEP_FILE is NOT atomic across the several OS
+// processes sharing it (global-setup.js + every test worker), so two workers
+// can both read the same lastStep, both independently compute the SAME "next
+// free" step, and both submit that code to the server — the backend's
+// single-use replay protection (security/mfa.py) then accepts whichever
+// arrives first and rejects the other as a replay, and since there is no
+// retry on that specific rejection, the loser's login() just waits forever
+// for a navigation that will never come (surfacing as an E2E timeout that no
+// amount of raising the timeout or tuning worker counts actually fixes).
+// fs.openSync(..., 'wx') is an atomic exclusive-create, making it usable as a
+// cross-process mutex with no extra dependency (same "no new npm dependency"
+// constraint as the rest of this file).
+async function withLock(fn) {
+  fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
+  for (;;) {
+    try {
+      const fd = fs.openSync(LOCK_FILE, 'wx');
+      fs.closeSync(fd);
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - fs.statSync(LOCK_FILE).mtimeMs > STALE_LOCK_MS) {
+          fs.rmSync(LOCK_FILE, { force: true }); // holder almost certainly crashed
+          continue;
+        }
+      } catch {
+        // Lock file vanished between the failed open and this stat — retry.
+      }
+      await sleep(20 + Math.random() * 30);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(LOCK_FILE, { force: true });
+  }
+}
 
 function readPersistedStep(secret) {
   try {
@@ -96,20 +141,35 @@ function writePersistedStep(secret, step) {
  * too close to a 30s boundary to survive the round-trip to the server, and
  * (b) landing on a time-step already used by an earlier call for this same
  * secret, anywhere in the suite (the account-level replay protection above).
+ *
+ * The wait itself happens OUTSIDE the lock (it can take up to ~30s, and
+ * holding the lock that long would serialise every concurrent TOTP request in
+ * the whole suite, not just the ones actually racing on this secret) — only
+ * the brief read-and-claim is atomic. A lost race just loops back around and
+ * computes a fresh step for the next window instead.
  */
 export async function freshTotp(secret, marginMs = 3000) {
   const stepOf = (ms) => Math.floor(ms / 30_000);
-  const lastStep = readPersistedStep(secret);
 
-  let now = Date.now();
-  let step = stepOf(now);
-  while (step <= lastStep || now % 30_000 > 30_000 - marginMs) {
-    const nextBoundary = (Math.max(step, lastStep) + 1) * 30_000;
-    await new Promise((r) => setTimeout(r, Math.max(0, nextBoundary - now) + 200));
-    now = Date.now();
-    step = stepOf(now);
+  for (;;) {
+    const lastStep = await withLock(() => readPersistedStep(secret));
+    const now0 = Date.now();
+    const step0 = stepOf(now0);
+    if (step0 <= lastStep || now0 % 30_000 > 30_000 - marginMs) {
+      const nextBoundary = (Math.max(step0, lastStep) + 1) * 30_000;
+      await sleep(Math.max(0, nextBoundary - now0) + 200);
+      continue;
+    }
+
+    const now = Date.now();
+    const step = stepOf(now);
+    const claimed = await withLock(() => {
+      if (readPersistedStep(secret) >= step) return false; // raced — someone else got it
+      writePersistedStep(secret, step);
+      return true;
+    });
+    if (claimed) return totp(secret, now);
+    // Lost the race for this step; loop and try again (will land on the
+    // next window, since the winner just claimed this one).
   }
-
-  writePersistedStep(secret, step);
-  return totp(secret, now);
 }

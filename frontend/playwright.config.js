@@ -14,7 +14,11 @@ export default defineConfig({
   // consumed) means a test that logs the SAME account in twice back-to-back
   // can legitimately need to wait out a whole 30s window each time (see
   // fixtures/totp.js::freshTotp). Two such logins in one test is ~60s alone.
-  timeout: 240_000,
+  // Also needs headroom for fixtures/helpers.js's NAV_TIMEOUT (120s) — a test
+  // chaining several post-action navigation waits (e.g. createAdminUser's
+  // register -> TOTP -> verify-email -> login) could otherwise hit this
+  // ceiling before any individual wait does, under sustained CI load.
+  timeout: 360_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

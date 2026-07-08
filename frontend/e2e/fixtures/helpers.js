@@ -23,6 +23,13 @@ export const STRONG_PASSWORD = 'Str0ng!Passw0rd#1';
 export const WEAK_PASSWORD = 'short1';
 export const DEFAULT_PIN = '135790';
 
+// Post-action navigation waits (register->TOTP, TOTP->verify-email, login->
+// dashboard, etc.) all consistently succeed, just sometimes later than 60s on
+// a loaded CI runner — never a hang, always eventually completes on retry.
+// That points at the wait being too tight rather than anything actually
+// broken, so it's generous here rather than tuned via worker-count alone.
+export const NAV_TIMEOUT = 120_000;
+
 // Explicit, not relying on the test runner's implicit per-project defaults —
 // browser.newContext() only inherits baseURL/ignoreHTTPSErrors automatically
 // when called on the fixture-provided `browser` from within a real Playwright
@@ -146,7 +153,7 @@ export async function registerUser(page, overrides = {}) {
   };
   await fillRegisterForm(page, user);
   await page.getByRole('button', { name: 'Register', exact: true }).click();
-  await page.waitForURL('**/register/totp', { timeout: 60_000 });
+  await page.waitForURL('**/register/totp', { timeout: NAV_TIMEOUT });
   const secret = await page.locator('input[readonly]').inputValue();
   return { ...user, secret };
 }
@@ -156,7 +163,7 @@ export async function completeTotpSetup(page, secret) {
   const code = await freshTotp(secret);
   await page.locator('input[inputmode="numeric"]').fill(code);
   await page.getByRole('button', { name: 'Verify Authenticator' }).click();
-  await page.waitForURL((url) => /\/(verify-email|login)$/.test(url.pathname), { timeout: 60_000 });
+  await page.waitForURL((url) => /\/(verify-email|login)$/.test(url.pathname), { timeout: NAV_TIMEOUT });
 }
 
 /** Read the real signup-verification email via Mailpit and click through it. */
@@ -164,7 +171,7 @@ export async function verifySignupEmailViaMailbox(page, email) {
   const msg = await waitForEmail(email, { subjectContains: undefined });
   const token = extractToken(msg.Text, '/verify-email');
   await page.goto(`/verify-email?token=${token}`);
-  await expect(page.getByRole('button', { name: 'Proceed to Log In' })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('button', { name: 'Proceed to Log In' })).toBeVisible({ timeout: NAV_TIMEOUT });
 }
 
 /** Full FR-01 happy path: register → confirm TOTP → verify signup email.
@@ -200,7 +207,7 @@ export async function submitMfaCode(page, secret) {
 export async function login(page, email, password, secret) {
   await fillAndSubmitLoginPassword(page, email, password);
   await submitMfaCode(page, secret);
-  await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 60_000 });
+  await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: NAV_TIMEOUT });
 }
 
 export async function logout(page) {
@@ -214,11 +221,11 @@ export async function logout(page) {
 // --------------------------------------------------------------------------- //
 
 export async function completePinSetup(page, pin = DEFAULT_PIN) {
-  await page.waitForURL('**/setup-pin', { timeout: 60_000 });
+  await page.waitForURL('**/setup-pin', { timeout: NAV_TIMEOUT });
   await page.locator('#pin').fill(pin);
   await page.locator('#confirmPin').fill(pin);
   await page.getByRole('button', { name: 'Complete Setup' }).click();
-  await page.waitForURL('**/dashboard', { timeout: 60_000 });
+  await page.waitForURL('**/dashboard', { timeout: NAV_TIMEOUT });
 }
 
 /** register -> activate -> first login -> PIN setup -> lands on /dashboard. */
