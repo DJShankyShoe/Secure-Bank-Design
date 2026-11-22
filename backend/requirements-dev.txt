@@ -4,7 +4,7 @@
 #   pip install -r requirements-dev.txt
 -r requirements.txt
 
-pytest==9.1.1            # test suite
+pytest==9.2.0            # test suite
 bandit==1.9.4            # SAST — must be clean, no high/medium
-flake8==7.3.0            # PEP 8 lint (NFR-05)
+flake8==7.5.0            # PEP 8 lint (NFR-05)
 # OWASP Dependency-Check & OWASP ZAP are run as external tools in CI, not pip deps.
